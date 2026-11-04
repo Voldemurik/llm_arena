@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Оценка AI-агентов: успешность, стоимость, задержка и шаги — учебная симуляция</title>
+  <meta name="description" content="Интерактивный учебный стенд: сравнение стратегий AI-агента по успешности, стоимости, задержке и числу шагов.">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#controls-title">Перейти к панели управления</a>
+
+  <header class="site-header">
+    <div class="container">
+      <p class="badge-sim" role="note">Учебная симуляция</p>
+      <h1>Оценка AI-агентов: успешность, стоимость, задержка и количество шагов</h1>
+      <p class="lead">
+        Правильный ответ — это ещё не всё. Агент может исправлять больше ошибок, если сначала планирует и потом проверяет себя,
+        но каждая дополнительная операция стоит денег, времени и увеличивает число шагов. Этот стенд позволяет увидеть
+        такой компромисс на практике и сравнить стратегии на одном и том же наборе задач.
+      </p>
+      <p class="notice">
+        <strong>Важно:</strong> это детерминированная учебная симуляция, а не запуск настоящей языковой модели.
+        Исходы задач заданы параметрами набора, стоимость выражена в условных единицах (у.е.), а время — модельное (мс и с).
+        Никакие внешние API и сетевые запросы не используются, всё считается локально в браузере.
+        Выводы относятся только к этому набору задач и правилам симуляции и не доказывают, что какая-то стратегия лучше всегда.
+      </p>
+      <nav aria-label="Разделы страницы">
+        <ul class="nav-list">
+          <li><a href="#controls">Настройка</a></li>
+          <li><a href="#results">Результаты</a></li>
+          <li><a href="#log">Журнал</a></li>
+          <li><a href="#history">История</a></li>
+          <li><a href="#compare">Сравнение</a></li>
+          <li><a href="#scenario">Контрольный сценарий</a></li>
+          <li><a href="#rules">Правила</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <noscript>
+      <p class="banner banner-warn">Для работы стенда нужен включённый JavaScript: вся симуляция выполняется локально в браузере.</p>
+    </noscript>
+
+    <!-- 1. Панель управления -->
+    <section id="controls" class="panel" aria-labelledby="controls-title">
+      <h2 id="controls-title">1. Настройте запуск</h2>
+      <div class="controls-grid">
+        <fieldset>
+          <legend>Стратегия агента</legend>
+          <label class="option">
+            <input type="radio" name="strategy" value="direct">
+            <span><strong>Прямой ответ</strong>
+              <small>Цепочка: Ответ. Один шаг, минимум затрат, но больше ошибок на сложных задачах.</small></span>
+          </label>
+          <label class="option">
+            <input type="radio" name="strategy" value="plan">
+            <span><strong>Планирование и ответ</strong>
+              <small>Цепочка: План → Ответ. Планирование помогает на части задач, но добавляет шаг, стоимость и время.</small></span>
+          </label>
+          <label class="option">
+            <input type="radio" name="strategy" value="verify">
+            <span><strong>Планирование, ответ и проверка</strong>
+              <small>Цепочка: План → Ответ → Проверка → (Исправление, только если ошибка исправима).</small></span>
+          </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Набор задач (уровни сложности)</legend>
+          <label class="option option-compact">
+            <input type="checkbox" data-diff="easy"> <span>Простые <small id="count-easy"></small></span>
+          </label>
+          <label class="option option-compact">
+            <input type="checkbox" data-diff="medium"> <span>Средние <small id="count-medium"></small></span>
+          </label>
+          <label class="option option-compact">
+            <input type="checkbox" data-diff="hard"> <span>Сложные <small id="count-hard"></small></span>
+          </label>
+          <p id="selection-info" class="selection-info"></p>
+          <button type="button" class="btn btn-secondary btn-small" data-action="select-all">Выбрать весь набор</button>
+        </fieldset>
+
+        <div class="field">
+          <label for="priority">Приоритет для вывода</label>
+          <select id="priority">
+            <option value="balanced">Баланс качества и затрат</option>
+            <option value="quality">Максимум успешности</option>
+            <option value="economy">Минимум стоимости и задержки</option>
+          </select>
+          <p class="hint">Влияет только на формулировку вывода в сравнении запусков. На расчёт симуляции не влияет.</p>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button type="button" class="btn btn-primary" data-action="run">Запустить симуляцию</button>
+        <button type="button" class="btn btn-secondary" data-action="reset">Сбросить результаты и параметры</button>
+      </div>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+    </section>
+
+    <!-- 2. Результаты -->
+    <section id="results" class="panel" aria-labelledby="results-title">
+      <h2 id="results-title" tabindex="-1">2. Результаты запуска</h2>
+      <div id="results-body"></div>
+    </section>
+
+    <!-- 3. Журнал -->
+    <section id="log" class="panel" aria-labelledby="log-title">
+      <h2 id="log-title" tabindex="-1">3. Журнал операций</h2>
+      <div class="field field-inline">
+        <label for="log-filter">Показать шаги задачи</label>
+        <select id="log-filter"><option value="all">Все задачи</option></select>
+      </div>
+      <div id="log-body"></div>
+    </section>
+
+    <!-- 4. История -->
+    <section id="history" class="panel" aria-labelledby="history-title">
+      <h2 id="history-title">4. История запусков</h2>
+      <p class="hint">Хранятся последние 8 запусков. Кнопка «Открыть» показывает результаты и журнал выбранного запуска.</p>
+      <div id="history-body"></div>
+    </section>
+
+    <!-- 5. Сравнение -->
+    <section id="compare" class="panel" aria-labelledby="compare-title">
+      <h2 id="compare-title">5. Сравнение запусков</h2>
+      <div class="compare-selects">
+        <div class="field">
+          <label for="cmp-a">Базовый запуск (A)</label>
+          <select id="cmp-a"></select>
+        </div>
+        <div class="field">
+          <label for="cmp-b">Сравниваемый запуск (B)</label>
+          <select id="cmp-b"></select>
+        </div>
+      </div>
+      <div id="compare-body"></div>
+    </section>
+
+    <!-- 6. Контрольный сценарий -->
+    <section id="scenario" class="panel" aria-labelledby="scenario-title">
+      <h2 id="scenario-title">6. Контрольный сценарий</h2>
+      <p>Как воспроизвести вручную на одном фиксированном наборе (весь набор из 15 задач):</p>
+      <ol>
+        <li>Нажмите «Выбрать весь набор», выберите стратегию «Планирование и ответ» и нажмите «Запустить симуляцию».</li>
+        <li>Не меняя набор, выберите «Планирование, ответ и проверка» и снова запустите симуляцию.</li>
+        <li>В разделе «Сравнение» (по умолчанию выбраны эти два запуска) найдите задачи, ставшие «Решена после исправления», и задачи «Не решена», которые проверка не исправила.</li>
+        <li>Сверьте разницу шагов, стоимости и задержки с таблицей «Откуда разница» и с шагами «Проверка» и «Исправление» в журнале.</li>
+        <li>Повторите оба запуска: контрольные суммы журналов в истории совпадут.</li>
+      </ol>
+      <p>Или выполните всё автоматически — кнопка ниже сама проведёт запуски и проверит условия по фактическим данным журналов:</p>
+      <button type="button" class="btn btn-secondary" data-action="scenario">Выполнить контрольный сценарий</button>
+      <div id="scenario-body" aria-live="polite"></div>
+    </section>
+
+    <!-- 7. Правила -->
+    <details id="rules" class="panel">
+      <summary>7. Формулы, коэффициенты и ограничения симуляции</summary>
+      <div id="rules-body"></div>
+    </details>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <p>Учебная симуляция: числа получены из правил, показанных в разделе 7, и не описывают реальные модели и тарифы.</p>
+    </div>
+  </footer>
+</body>
+</html>

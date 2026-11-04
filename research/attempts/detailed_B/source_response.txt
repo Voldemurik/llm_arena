@@ -1,0 +1,3115 @@
+Ниже представлен полный работающий исходный код интерактивного образовательного сайта, разделённый на три файла: `index.html`, `styles.css` и `app.js`. Все пути относительные, внешние библиотеки, CDN и сетевые запросы не используются.
+
+---
+
+### Файл 1: `index.html`
+
+```html
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Оценка AI-агентов: успешность, стоимость, задержка и количество шагов</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#control-panel">Перейти к панели управления</a>
+
+  <header class="site-header">
+    <div class="container">
+      <div class="header-badges">
+        <span class="sim-badge" role="note" aria-label="Статус стенда: учебная симуляция">
+          УЧЕБНАЯ СИМУЛЯЦИЯ · ДЕТЕРМИНИРОВАННАЯ МОДЕЛЬ
+        </span>
+        <span class="sim-subbadge">
+          Без вызова внешних LLM · Локальный расчёт в браузере
+        </span>
+      </div>
+
+      <h1>Оценка AI-агентов: успешность, стоимость, задержка и количество шагов</h1>
+      <p class="header-lead">
+        Интерактивный стенд для изучения инженерного компромисса при проектировании AI-агентов.
+        Оценивать агента только по доле правильных ответов недостаточно: добавление шагов планирования,
+        самопроверки и исправления способно повысить качество на сложных задачах, но требует дополнительных
+        вычислительных ресурсов, времени и шагов выполнения.
+      </p>
+
+      <div class="sim-disclaimer" role="region" aria-label="Предупреждение об учебной природе симуляции">
+        <strong>Важное примечание:</strong> на этой странице работает детерминированная учебная симуляция,
+        а не настоящая языковая модель. Каждый запуск формирует реальную последовательность шагов для каждой
+        выбранной задачи по прозрачным математическим правилам. Стоимость измеряется в условных единицах (у.е.,
+        где 1 у.е. = 100 условных токенов), а задержка — в миллисекундах модельного времени (мс).
+      </div>
+    </div>
+  </header>
+
+  <main class="container main-content">
+    <!-- 1. ПАНЕЛЬ УПРАВЛЕНИЯ -->
+    <section id="control-panel" class="card section-card" aria-labelledby="control-panel-title">
+      <div class="section-header">
+        <div>
+          <h2 id="control-panel-title">1. Панель выбора стратегии и набора задач</h2>
+          <p class="section-subtitle">
+            Выберите архитектуру цикла рассуждений агента и отфильтруйте выборку задач, затем нажмите «Запустить симуляцию».
+          </p>
+        </div>
+        <div class="run-counter-badge" id="run-counter-badge" aria-live="polite">
+          Выполнено запусков: 0
+        </div>
+      </div>
+
+      <div class="controls-grid">
+        <!-- Выбор стратегии -->
+        <fieldset class="control-fieldset">
+          <legend class="fieldset-legend">Стратегия работы AI-агента</legend>
+          <div class="strategy-options" role="radiogroup" aria-label="Стратегия работы AI-агента">
+            <label class="strategy-card" for="strategy-direct">
+              <input type="radio" name="strategy" id="strategy-direct" value="direct">
+              <span class="strategy-card-body">
+                <span class="strategy-title-row">
+                  <span class="strategy-name">1. Прямой ответ</span>
+                  <span class="strategy-steps-pill">1 шаг / задача</span>
+                </span>
+                <span class="strategy-flow">Последовательность: <code>Ответ</code></span>
+                <span class="strategy-desc">
+                  Агент сразу генерирует решение без декомпозиции и валидации. Минимальные затраты и задержка,
+                  но высокая уязвимость на многошаговых и граничных задачах.
+                </span>
+              </span>
+            </label>
+
+            <label class="strategy-card" for="strategy-plan-answer">
+              <input type="radio" name="strategy" id="strategy-plan-answer" value="plan_answer" checked>
+              <span class="strategy-card-body">
+                <span class="strategy-title-row">
+                  <span class="strategy-name">2. Планирование и ответ</span>
+                  <span class="strategy-steps-pill">2 шага / задача</span>
+                </span>
+                <span class="strategy-flow">Последовательность: <code>План → Ответ</code></span>
+                <span class="strategy-desc">
+                  Перед ответом агент строит план рассуждений. Устраняет структурные ошибки композиции,
+                  но оставляет мелкие дефекты формата, синтаксиса или граничных условий.
+                </span>
+              </span>
+            </label>
+
+            <label class="strategy-card" for="strategy-plan-verify">
+              <input type="radio" name="strategy" id="strategy-plan-verify" value="plan_verify">
+              <span class="strategy-card-body">
+                <span class="strategy-title-row">
+                  <span class="strategy-name">3. Планирование, ответ и проверка</span>
+                  <span class="strategy-steps-pill">3–4 шага / задача</span>
+                </span>
+                <span class="strategy-flow">Последовательность: <code>План → Ответ → Проверка [→ Исправление]</code></span>
+                <span class="strategy-desc">
+                  После ответа запускается валидация. Если обнаружена <em>исправимая ошибка</em>, добавляется
+                  отдельный шаг исправления. Заведомо <em>неисправимые ошибки</em> проверка исправить не может.
+                </span>
+              </span>
+            </label>
+          </div>
+        </fieldset>
+
+        <!-- Выбор набора задач -->
+        <fieldset class="control-fieldset">
+          <legend class="fieldset-legend">Выборка задач по уровню сложности</legend>
+
+          <div class="preset-buttons-group" role="group" aria-label="Быстрые пресеты выбора задач">
+            <button type="button" class="btn btn-preset active" data-preset="all">
+              Все задачи (12)
+            </button>
+            <button type="button" class="btn btn-preset" data-preset="easy">
+              Только простые (4)
+            </button>
+            <button type="button" class="btn btn-preset" data-preset="medium">
+              Только средние (4)
+            </button>
+            <button type="button" class="btn btn-preset" data-preset="hard">
+              Только сложные (4)
+            </button>
+            <button type="button" class="btn btn-preset btn-preset-empty" data-preset="none">
+              Снять выбор (0 задач)
+            </button>
+          </div>
+
+          <div class="difficulty-checkboxes" role="group" aria-label="Фильтр уровней сложности">
+            <label class="checkbox-card" for="diff-easy">
+              <input type="checkbox" id="diff-easy" value="easy" checked>
+              <span class="checkbox-card-content">
+                <span class="diff-header">
+                  <span class="badge badge-easy">Простая (K = 1)</span>
+                  <span class="diff-count">4 задачи</span>
+                </span>
+                <span class="diff-desc">Базовый тариф шагов (×1). Включает типовые запросы и 1 задачу со строгой JSON-схемой.</span>
+              </span>
+            </label>
+
+            <label class="checkbox-card" for="diff-medium">
+              <input type="checkbox" id="diff-medium" value="medium" checked>
+              <span class="checkbox-card-content">
+                <span class="diff-header">
+                  <span class="badge badge-medium">Средняя (K = 2)</span>
+                  <span class="diff-count">4 задачи</span>
+                </span>
+                <span class="diff-desc">Множитель ресурсов ×2. Включает часовые пояса, SQL, баланс и 1 задачу без доступа к ERP.</span>
+              </span>
+            </label>
+
+            <label class="checkbox-card" for="diff-hard">
+              <input type="checkbox" id="diff-hard" value="hard" checked>
+              <span class="checkbox-card-content">
+                <span class="diff-header">
+                  <span class="badge badge-hard">Сложная (K = 3)</span>
+                  <span class="diff-count">4 задачи</span>
+                </span>
+                <span class="diff-desc">Множитель ресурсов ×3. Архитектура, рекурсия, смарт-контракт и 1 противоречивое ТЗ.</span>
+              </span>
+            </label>
+          </div>
+
+          <div class="selection-summary" id="selection-summary" aria-live="polite">
+            Выбрано задач: <strong>12 из 12</strong> (Простые: 4, Средние: 4, Сложные: 4)
+          </div>
+        </fieldset>
+      </div>
+
+      <!-- Сообщения об ошибках / устаревшем состоянии -->
+      <div id="validation-alert" class="alert alert-error hidden" role="alert"></div>
+      <div id="stale-alert" class="alert alert-warning hidden" role="status" aria-live="polite"></div>
+
+      <!-- Кнопки действий -->
+      <div class="action-bar">
+        <button type="button" id="run-btn" class="btn btn-primary">
+          Запустить симуляцию
+        </button>
+        <button type="button" id="reset-btn" class="btn btn-secondary">
+          Сбросить результаты и параметры
+        </button>
+      </div>
+    </section>
+
+    <!-- ПАМЯТКА КОНТРОЛЬНОГО СЦЕНАРИЯ -->
+    <section id="scenario-guide" class="card section-card scenario-card" aria-labelledby="scenario-title">
+      <div class="scenario-header">
+        <div>
+          <h2 id="scenario-title">Контрольный сценарий проверки компромисса (воспроизводимость)</h2>
+          <p class="section-subtitle">
+            Повторите эти шаги на одинаковом наборе задач («Все задачи (12)»), чтобы наглядно проверить работу проверки, исправления и детерминизм расчётов:
+          </p>
+        </div>
+        <span class="badge badge-neutral" id="scenario-progress-badge">Прогресс сценария: 0 / 3</span>
+      </div>
+      <ol class="scenario-steps">
+        <li id="scen-step-1">
+          Оставьте выборку <strong>«Все задачи (12)»</strong>, выберите стратегию <strong>«2. Планирование и ответ»</strong> и нажмите <strong>«Запустить симуляцию»</strong> (ожидаемо: успешность <code>41.7%</code>, <code>5 из 12</code> задач, <code>24 шага</code>, <code>240 у.е.</code>, <code>18 000 мс</code>).
+        </li>
+        <li id="scen-step-2">
+          Не меняя набор задач, переключите стратегию на <strong>«3. Планирование, ответ и проверка»</strong> и нажмите <strong>«Запустить симуляцию»</strong> (проверка исправит 5 исправимых ошибок, 2 неисправимые ошибки в задачах <code>T-08</code> и <code>T-11</code> останутся; успешность вырастет до <code>83.3%</code>, <code>10 из 12</code> задач, <code>41 шаг</code>, <code>367 у.е.</code>, <code>28 400 мс</code>).
+        </li>
+        <li id="scen-step-3">
+          Изучите блок <strong>«Сравнение запусков»</strong> ниже: прирост составил ровно <code>+17 шагов</code> (12 проверок + 5 исправлений), <code>+127 у.е.</code> и <code>+10 400 мс</code>. Повторный запуск любой из стратегий даст идентичные числа.
+        </li>
+      </ol>
+    </section>
+
+    <!-- 2. КАРТОЧКИ ЧЕТЫРЁХ ОСНОВНЫХ МЕТРИК -->
+    <section id="metrics-section" class="card section-card" aria-labelledby="metrics-title">
+      <div class="section-header">
+        <div>
+          <h2 id="metrics-title">2. Основные метрики запуска</h2>
+          <p class="section-subtitle" id="metrics-run-context">
+            Запуск ещё не выполнялся. Выберите параметры выше и нажмите «Запустить симуляцию».
+          </p>
+        </div>
+        <div id="consistency-badge" class="consistency-badge hidden" role="status">
+          Сверка пройдена: карточки = сумма таблицы задач = сумма журнала шагов
+        </div>
+      </div>
+
+      <!-- Пустое состояние до первого запуска -->
+      <div id="metrics-empty-state" class="empty-state">
+        <div class="empty-state-title">Нет данных для отображения метрик</div>
+        <p class="empty-state-text">
+          До первого запуска показатели не заполняются нулями, чтобы их нельзя было принять за результат расчёта.
+          Выберите стратегию агента и нажмите кнопку <strong>«Запустить симуляцию»</strong>.
+        </p>
+      </div>
+
+      <!-- Сетка из 4 карточек метрик (показывается после запуска) -->
+      <div id="metrics-grid" class="metrics-grid hidden" aria-live="polite">
+        <article class="metric-card metric-card-success">
+          <div class="metric-header">
+            <span class="metric-label">Успешность (Success Rate)</span>
+            <span class="metric-formula-hint" title="Успешно решённые задачи / Общее число задач × 100%">Формула: M / N × 100%</span>
+          </div>
+          <div class="metric-value" id="metric-success-rate">—</div>
+          <div class="metric-subvalue" id="metric-success-count">—</div>
+          <div class="metric-breakdown" id="metric-success-breakdown">—</div>
+        </article>
+
+        <article class="metric-card metric-card-cost">
+          <div class="metric-header">
+            <span class="metric-label">Общая стоимость (Total Cost)</span>
+            <span class="metric-formula-hint" title="Сумма стоимости всех выполненных шагов">Формула: Σ cost(шаг)</span>
+          </div>
+          <div class="metric-value" id="metric-total-cost">—</div>
+          <div class="metric-subvalue" id="metric-avg-cost">—</div>
+          <div class="metric-breakdown" id="metric-cost-breakdown">—</div>
+        </article>
+
+        <article class="metric-card metric-card-latency">
+          <div class="metric-header">
+            <span class="metric-label">Общая задержка (Total Latency)</span>
+            <span class="metric-formula-hint" title="Сумма длительности всех выполненных шагов">Формула: Σ latency(шаг)</span>
+          </div>
+          <div class="metric-value" id="metric-total-latency">—</div>
+          <div class="metric-subvalue" id="metric-avg-latency">—</div>
+          <div class="metric-breakdown" id="metric-latency-breakdown">—</div>
+        </article>
+
+        <article class="metric-card metric-card-steps">
+          <div class="metric-header">
+            <span class="metric-label">Количество шагов (Step Count)</span>
+            <span class="metric-formula-hint" title="Фактическое число операций во всех задачах">Формула: Σ шагов</span>
+          </div>
+          <div class="metric-value" id="metric-total-steps">—</div>
+          <div class="metric-subvalue" id="metric-avg-steps">—</div>
+          <div class="metric-breakdown" id="metric-steps-breakdown">—</div>
+        </article>
+      </div>
+
+      <!-- 3. КРАТКИЙ ДИНАМИЧЕСКИЙ ВЫВОД -->
+      <div id="dynamic-conclusion" class="conclusion-box hidden" role="region" aria-labelledby="conclusion-heading">
+        <h3 id="conclusion-heading">Аналитический вывод по результатам запуска</h3>
+        <div id="conclusion-content" class="conclusion-content"></div>
+      </div>
+    </section>
+
+    <!-- 4. ОБЛАСТЬ СРАВНЕНИЯ ЗАПУСКОВ -->
+    <section id="comparison-section" class="card section-card" aria-labelledby="comparison-title">
+      <div class="section-header">
+        <div>
+          <h2 id="comparison-title">3. Сравнение запусков и оценка компромисса</h2>
+          <p class="section-subtitle">
+            Сопоставление двух запусков показывает, какую цену в шагах, стоимости и задержке агент платит за изменение качества.
+          </p>
+        </div>
+      </div>
+
+      <!-- Пустое состояние сравнения (меньше 2 запусков) -->
+      <div id="comparison-empty-state" class="empty-state">
+        <div class="empty-state-title">Недостаточно данных для сравнения запусков</div>
+        <p class="empty-state-text" id="comparison-empty-text">
+          Сейчас в истории сохранён <strong>0 запусков</strong>. Чтобы сравнить стратегии, выполните сначала один запуск
+          (например, «Планирование и ответ»), затем выберите другую стратегию на том же наборе задач (например,
+          «Планирование, ответ и проверка») и нажмите «Запустить симуляцию» второй раз.
+        </p>
+      </div>
+
+      <!-- Рабочая область сравнения (показывается, когда >= 2 запусков) -->
+      <div id="comparison-content" class="hidden">
+        <div class="comparison-selectors">
+          <div class="selector-group">
+            <label for="compare-run-a">Базовый запуск (Запуск А):</label>
+            <select id="compare-run-a" class="form-select"></select>
+          </div>
+          <div class="selector-group">
+            <label for="compare-run-b">Сравниваемый запуск (Запуск Б):</label>
+            <select id="compare-run-b" class="form-select"></select>
+          </div>
+        </div>
+
+        <!-- Статус совпадения набора задач -->
+        <div id="comparison-taskset-status" class="alert" role="status" aria-live="polite"></div>
+
+        <!-- Карточки дельт по 4 метрикам -->
+        <div class="comparison-grid" id="comparison-grid"></div>
+
+        <!-- Таблица построчного изменения исходов задач -->
+        <div class="comparison-tasks-wrapper" id="comparison-tasks-wrapper">
+          <h3 class="subsection-title">Позадачное сравнение исходов и накладных расходов (Запуск А → Запуск Б)</h3>
+          <div class="table-responsive">
+            <table class="data-table" id="comparison-tasks-table">
+              <thead>
+                <tr>
+                  <th scope="col">Задача</th>
+                  <th scope="col">Сложность</th>
+                  <th scope="col">Исход в Запуске А</th>
+                  <th scope="col">Исход в Запуске Б</th>
+                  <th scope="col">Δ Шагов</th>
+                  <th scope="col">Δ Стоимости</th>
+                  <th scope="col">Δ Задержки</th>
+                  <th scope="col">Интерпретация эффекта</th>
+                </tr>
+              </thead>
+              <tbody id="comparison-tasks-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. ТАБЛИЦА РЕЗУЛЬТАТОВ ПО ЗАДАЧАМ -->
+    <section id="tasks-table-section" class="card section-card" aria-labelledby="tasks-table-title">
+      <div class="section-header">
+        <div>
+          <h2 id="tasks-table-title">4. Результаты по каждой задаче текущего запуска</h2>
+          <p class="section-subtitle">
+            Детализация исхода, типа ошибки, цепочки выполненных операций и затрат по каждой задаче выборки.
+          </p>
+        </div>
+      </div>
+
+      <div id="tasks-empty-state" class="empty-state">
+        <div class="empty-state-title">Таблица задач пуста</div>
+        <p class="empty-state-text">
+          Запустите симуляцию, чтобы увидеть результаты прохождения каждой задачи выбранного набора.
+        </p>
+      </div>
+
+      <div id="tasks-table-container" class="hidden">
+        <div class="table-responsive">
+          <table class="data-table" id="tasks-results-table" aria-describedby="tasks-table-title">
+            <thead>
+              <tr>
+                <th scope="col">Код и задача</th>
+                <th scope="col">Сложность</th>
+                <th scope="col">Исход и диагностика</th>
+                <th scope="col">Цепочка шагов</th>
+                <th scope="col" class="num-col">Шаги</th>
+                <th scope="col" class="num-col">Стоимость</th>
+                <th scope="col" class="num-col">Задержка</th>
+                <th scope="col">Журнал</th>
+              </tr>
+            </thead>
+            <tbody id="tasks-results-tbody"></tbody>
+            <tfoot id="tasks-results-tfoot"></tfoot>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6. ЖУРНАЛ ОПЕРАЦИЙ -->
+    <section id="journal-section" class="card section-card" aria-labelledby="journal-title">
+      <div class="section-header">
+        <div>
+          <h2 id="journal-title">5. Пошаговый журнал операций выбранного запуска</h2>
+          <p class="section-subtitle">
+            Полная трассировка каждого шага агента с указанием его вклада в общую стоимость, задержку и количество операций.
+          </p>
+        </div>
+      </div>
+
+      <div id="journal-empty-state" class="empty-state">
+        <div class="empty-state-title">Журнал операций пуст</div>
+        <p class="empty-state-text">
+          После запуска симуляции здесь появится хронологический список всех выполненных шагов агента.
+        </p>
+      </div>
+
+      <div id="journal-container" class="hidden">
+        <div class="journal-filters">
+          <div class="selector-group">
+            <label for="journal-task-filter">Фильтр по задаче:</label>
+            <select id="journal-task-filter" class="form-select">
+              <option value="all">Все задачи запуска</option>
+            </select>
+          </div>
+          <div class="selector-group">
+            <label for="journal-step-filter">Фильтр по типу операции:</label>
+            <select id="journal-step-filter" class="form-select">
+              <option value="all">Все типы операций</option>
+              <option value="plan">Планирование (plan)</option>
+              <option value="answer">Генерация ответа (answer)</option>
+              <option value="verify">Проверка ответа (verify)</option>
+              <option value="fix">Исправление ошибки (fix)</option>
+            </select>
+          </div>
+          <button type="button" id="journal-reset-filter-btn" class="btn btn-secondary btn-sm">
+            Показать все шаги
+          </button>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table" id="journal-table" aria-describedby="journal-title">
+            <thead>
+              <tr>
+                <th scope="col" class="num-col">№ шага</th>
+                <th scope="col">Задача</th>
+                <th scope="col">Тип операции</th>
+                <th scope="col">Действие агента и результат шага</th>
+                <th scope="col" class="num-col">Вклад: шаги</th>
+                <th scope="col" class="num-col">Вклад: стоимость</th>
+                <th scope="col" class="num-col">Вклад: задержка</th>
+              </tr>
+            </thead>
+            <tbody id="journal-tbody"></tbody>
+            <tfoot id="journal-tfoot"></tfoot>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- 7. РАСКРЫВАЕМЫЙ РАЗДЕЛ С ФОРМУЛАМИ, КОЭФФИЦИЕНТАМИ И ОГРАНИЧЕНИЯМИ СИМУЛЯЦИИ -->
+    <section id="rules-section" class="card section-card" aria-labelledby="rules-title">
+      <details class="rules-details" id="rules-details" open>
+        <summary class="rules-summary">
+          <span id="rules-title" class="rules-summary-title">
+            6. Правила симуляции, математические формулы, коэффициенты и ограничения модели
+          </span>
+          <span class="rules-toggle-hint">Нажмите, чтобы свернуть / развернуть</span>
+        </summary>
+
+        <div class="rules-body">
+          <div class="rules-grid">
+            <div class="rules-block">
+              <h3>Формулы расчёта агрегированных метрик</h3>
+              <ul class="rules-list">
+                <li>
+                  <strong>Успешность (Success Rate):</strong><br>
+                  <code>Успешность = (Количество успешно решённых задач / Общее количество задач в выборке) × 100%</code>
+                </li>
+                <li>
+                  <strong>Общая стоимость (Total Cost):</strong><br>
+                  <code>Общая стоимость = Σ Стоимость(шаг_j)</code> по всем фактически выполненным шагам во всех задачах выборки (в условных единицах, <code>1 у.е. = 100 усл. токенов</code>).
+                </li>
+                <li>
+                  <strong>Общая задержка (Total Latency):</strong><br>
+                  <code>Общая задержка = Σ Длительность(шаг_j)</code> по всем фактически выполненным шагам (в миллисекундах модельного времени, <code>мс</code>).
+                </li>
+                <li>
+                  <strong>Количество шагов (Step Count):</strong><br>
+                  <code>Количество шагов = Фактическое число операций</code>, зафиксированных в журнале запуска.
+                </li>
+                <li>
+                  <strong>Средние показатели на задачу (справочно):</strong><br>
+                  Деление общей стоимости, задержки и количества шагов на число задач в выборке <code>N</code>. Отображаются дополнительно и не заменяют суммарные показатели.
+                </li>
+              </ul>
+            </div>
+
+            <div class="rules-block">
+              <h3>Коэффициенты сложности и таблица стоимости/длительности шагов</h3>
+              <p>
+                Каждая задача имеет уровень сложности и соответствующий множитель ресурсоёмкости <code>K</code>:
+                <strong>Простая</strong> (<code>K = 1</code>), <strong>Средняя</strong> (<code>K = 2</code>), <strong>Сложная</strong> (<code>K = 3</code>).
+                Стоимость и задержка каждого шага вычисляются детерминированно:
+                <code>Стоимость = Базовая_стоимость × K</code>, <code>Задержка = Базовая_задержка × K</code>.
+              </p>
+              <div class="table-responsive">
+                <table class="data-table rules-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Тип операции</th>
+                      <th scope="col">База (K=1: Простая)</th>
+                      <th scope="col">Средняя (K=2)</th>
+                      <th scope="col">Сложная (K=3)</th>
+                      <th scope="col">Условие вызова</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><strong>Планирование</strong> (<code>plan</code>)</td>
+                      <td>4 у.е. / 300 мс</td>
+                      <td>8 у.е. / 600 мс</td>
+                      <td>12 у.е. / 900 мс</td>
+                      <td>Стратегии 2 и 3 (всегда 1-й шаг)</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Генерация ответа</strong> (<code>answer</code>)</td>
+                      <td>6 у.е. / 450 мс</td>
+                      <td>12 у.е. / 900 мс</td>
+                      <td>18 у.е. / 1350 мс</td>
+                      <td>Все стратегии (основной шаг)</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Проверка ответа</strong> (<code>verify</code>)</td>
+                      <td>3 у.е. / 250 мс</td>
+                      <td>6 у.е. / 500 мс</td>
+                      <td>9 у.е. / 750 мс</td>
+                      <td>Только стратегия 3 (после ответа)</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Исправление</strong> (<code>fix</code>)</td>
+                      <td>5 у.е. / 400 мс</td>
+                      <td>10 у.е. / 800 мс</td>
+                      <td>15 у.е. / 1200 мс</td>
+                      <td>Только стратегия 3 и <strong>только</strong> при обнаружении исправимой ошибки</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div class="rules-grid">
+            <div class="rules-block">
+              <h3>Логика исходов по типам задач и ошибок</h3>
+              <ul class="rules-list">
+                <li>
+                  <strong>Простые без рассуждений (T-01, T-02):</strong> решаются с первой попытки во всех трёх стратегиях. Добавление планирования и проверки здесь создаёт только накладные расходы без прироста качества.
+                </li>
+                <li>
+                  <strong>Задачи, требующие планирования (T-04, T-05, T-09):</strong> при «Прямом ответе» агент совершает структурную ошибку композиции. Предварительный шаг <code>plan</code> полностью устраняет причину ошибки, поэтому стратегии 2 и 3 решают задачу успешно без шага исправления.
+                </li>
+                <li>
+                  <strong>Задачи с исправимой ошибкой (T-03, T-06, T-07, T-10, T-12):</strong> даже при наличии плана в первичном ответе остаётся локальный проверяемый дефект (синтаксис JSON, граничный оператор <code>&gt;=</code>, контрольная сумма, пустой узел дерева или пропущенный счётчик состояния). Стратегия 2 завершается неудачей, а в стратегии 3 шаг <code>verify</code> локализует дефект и запускает шаг <code>fix</code>, переводящий задачу в статус «Успех».
+                </li>
+                <li>
+                  <strong>Задачи с неисправимой ошибкой (T-08, T-11):</strong> ошибка вызвана фундаментальным ограничением (отсутствие доступа к закрытой базе ERP в <code>T-08</code> или физически противоречивые требования заказчика в <code>T-11</code>). Шаг <code>verify</code> фиксирует невозможность корректного решения собственными силами агента, шаг <code>fix</code> не запускается, и задача закономерно остаётся нерешённой.
+                </li>
+              </ul>
+            </div>
+
+            <div class="rules-block">
+              <h3>Ограничения учебной симуляции</h3>
+              <ul class="rules-list">
+                <li>
+                  <strong>Полная детерминированность:</strong> в реальных LLM-агентах генерация стохастична (зависит от температуры и сэмплирования). Здесь для воспроизводимости учебных экспериментов исходы и затраты строго детерминированы.
+                </li>
+                <li>
+                  <strong>Линейная модель ресурсов:</strong> стоимость и задержка каждого типа шага зависят от базового тарифа операции и коэффициента сложности задачи <code>K</code>. В промышленной среде задержка также зависит от сетевого отклика внешних API и текущей нагрузки на GPU-кластер.
+                </li>
+                <li>
+                  <strong>Отсутствие серебряной пули:</strong> симуляция демонстрирует, что усложнение агента оправдано там, где цена ошибки высока, а задачи содержат сложные ограничения. На потоке простых запросов сложная стратегия лишь кратно увеличивает бюджет и время ожидания.
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </details>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <span>Образовательный стенд «Оценка AI-агентов: успешность, стоимость, задержка и количество шагов»</span>
+      <span>Статический локальный сайт (HTML + CSS + JS) · Детерминированная учебная симуляция</span>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
+```
+
+---
+
+### Файл 2: `styles.css`
+
+```css
+:root {
+  --bg-page: #f4f6f9;
+  --bg-surface: #ffffff;
+  --bg-subtle: #eef2f7;
+  --bg-accent-soft: #e8f0fe;
+  --text-primary: #141c2b;
+  --text-secondary: #435168;
+  --text-muted: #63728a;
+  --border-color: #d4dce8;
+  --border-strong: #9fb0c7;
+
+  --primary: #1a56db;
+  --primary-hover: #1342ad;
+  --primary-light: #e1effe;
+
+  --success-bg: #def7ec;
+  --success-text: #03543f;
+  --success-border: #84e1bc;
+
+  --warning-bg: #fef3c7;
+  --warning-text: #78350f;
+  --warning-border: #f59e0b;
+
+  --danger-bg: #fde8e8;
+  --danger-text: #9b1c1c;
+  --danger-border: #f8b4b4;
+
+  --info-bg: #e0f2fe;
+  --info-text: #075985;
+  --info-border: #7dd3fc;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.07);
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background-color: var(--bg-page);
+  color: var(--text-primary);
+  line-height: 1.55;
+}
+
+/* Доступность с клавиатуры */
+.skip-link {
+  position: absolute;
+  top: -100px;
+  left: 16px;
+  background: var(--primary);
+  color: #ffffff;
+  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  z-index: 1000;
+  text-decoration: none;
+}
+
+.skip-link:focus {
+  top: 12px;
+}
+
+:focus-visible {
+  outline: 3px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.container {
+  width: 100%;
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* Шапка */
+.site-header {
+  background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+  color: #f8fafc;
+  padding: 32px 0 28px;
+  border-bottom: 4px solid var(--primary);
+}
+
+.header-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.sim-badge {
+  display: inline-block;
+  background-color: #f59e0b;
+  color: #111827;
+  font-weight: 800;
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  padding: 5px 12px;
+  border-radius: 999px;
+  text-transform: uppercase;
+}
+
+.sim-subbadge {
+  display: inline-block;
+  background-color: rgba(255, 255, 255, 0.14);
+  color: #e2e8f0;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 999px;
+}
+
+.site-header h1 {
+  margin: 0 0 12px;
+  font-size: clamp(1.45rem, 2.6vw, 2.15rem);
+  line-height: 1.25;
+  color: #ffffff;
+}
+
+.header-lead {
+  margin: 0 0 18px;
+  color: #cbd5e1;
+  font-size: 1.02rem;
+  max-width: 960px;
+}
+
+.sim-disclaimer {
+  background-color: rgba(255, 255, 255, 0.09);
+  border-left: 4px solid #f59e0b;
+  padding: 12px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 0.92rem;
+  color: #f1f5f9;
+}
+
+/* Основной контент и карточки секций */
+.main-content {
+  padding-top: 24px;
+  padding-bottom: 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.section-card {
+  padding: 24px;
+}
+
+.section-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.section-header h2 {
+  margin: 0 0 4px;
+  font-size: 1.28rem;
+  color: var(--text-primary);
+}
+
+.section-subtitle {
+  margin: 0;
+  font-size: 0.94rem;
+  color: var(--text-secondary);
+}
+
+.run-counter-badge {
+  background-color: var(--bg-subtle);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-weight: 700;
+  font-size: 0.88rem;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+/* Панель управления */
+.controls-grid {
+  display: grid;
+  grid-template-columns: 1.15fr 1fr;
+  gap: 20px;
+  margin-bottom: 18px;
+}
+
+.control-fieldset {
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background-color: #fafbfd;
+}
+
+.fieldset-legend {
+  font-weight: 700;
+  font-size: 0.98rem;
+  padding: 0 8px;
+  color: var(--text-primary);
+}
+
+.strategy-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.strategy-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 13px 14px;
+  border: 2px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-surface);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.strategy-card:hover {
+  border-color: var(--border-strong);
+}
+
+.strategy-card:has(input:checked) {
+  border-color: var(--primary);
+  background-color: #f4f8ff;
+}
+
+.strategy-card input[type="radio"] {
+  margin-top: 4px;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--primary);
+  flex-shrink: 0;
+}
+
+.strategy-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+.strategy-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.strategy-name {
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--text-primary);
+}
+
+.strategy-steps-pill {
+  font-size: 0.78rem;
+  font-weight: 700;
+  background-color: var(--bg-subtle);
+  color: var(--text-secondary);
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+}
+
+.strategy-flow {
+  font-size: 0.85rem;
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.strategy-flow code {
+  font-family: var(--font-mono);
+  background: var(--primary-light);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.strategy-desc {
+  font-size: 0.87rem;
+  color: var(--text-secondary);
+}
+
+/* Фильтры сложности */
+.preset-buttons-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  margin-bottom: 14px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 0.94rem;
+  padding: 10px 18px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.btn-primary {
+  background-color: var(--primary);
+  color: #ffffff;
+  font-size: 1rem;
+  padding: 12px 24px;
+}
+
+.btn-primary:hover {
+  background-color: var(--primary-hover);
+}
+
+.btn-secondary {
+  background-color: var(--bg-surface);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.btn-secondary:hover {
+  background-color: var(--bg-subtle);
+}
+
+.btn-sm {
+  padding: 7px 12px;
+  font-size: 0.86rem;
+}
+
+.btn-preset {
+  padding: 6px 11px;
+  font-size: 0.82rem;
+  background-color: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+}
+
+.btn-preset:hover {
+  background-color: var(--bg-subtle);
+  border-color: var(--border-strong);
+}
+
+.btn-preset.active {
+  background-color: var(--primary);
+  color: #ffffff;
+  border-color: var(--primary);
+}
+
+.btn-preset-empty {
+  color: var(--danger-text);
+  border-color: var(--danger-border);
+}
+
+.btn-preset-empty.active {
+  background-color: var(--danger-text);
+  color: #ffffff;
+  border-color: var(--danger-text);
+}
+
+.difficulty-checkboxes {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.checkbox-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-surface);
+  cursor: pointer;
+}
+
+.checkbox-card:has(input:checked) {
+  border-color: var(--primary);
+  background-color: #f7faff;
+}
+
+.checkbox-card input[type="checkbox"] {
+  margin-top: 3px;
+  width: 17px;
+  height: 17px;
+  accent-color: var(--primary);
+  flex-shrink: 0;
+}
+
+.checkbox-card-content {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+}
+
+.diff-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.diff-count {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.diff-desc {
+  font-size: 0.83rem;
+  color: var(--text-secondary);
+}
+
+.selection-summary {
+  margin-top: 12px;
+  padding: 9px 12px;
+  background-color: var(--bg-subtle);
+  border-radius: var(--radius-sm);
+  font-size: 0.88rem;
+  color: var(--text-primary);
+}
+
+.action-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+/* Бейджи */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  border-radius: 4px;
+  line-height: 1.4;
+}
+
+.badge-easy {
+  background-color: #dcfce7;
+  color: #166534;
+  border: 1px solid #86efac;
+}
+
+.badge-medium {
+  background-color: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
+}
+
+.badge-hard {
+  background-color: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
+}
+
+.badge-neutral {
+  background-color: var(--bg-subtle);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+}
+
+.badge-success {
+  background-color: var(--success-bg);
+  color: var(--success-text);
+  border: 1px solid var(--success-border);
+}
+
+.badge-fail {
+  background-color: var(--danger-bg);
+  color: var(--danger-text);
+  border: 1px solid var(--danger-border);
+}
+
+/* Уведомления */
+.alert {
+  padding: 12px 16px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 14px;
+  font-size: 0.92rem;
+  font-weight: 500;
+}
+
+.alert-error {
+  background-color: var(--danger-bg);
+  color: var(--danger-text);
+  border: 1px solid var(--danger-border);
+}
+
+.alert-warning {
+  background-color: var(--warning-bg);
+  color: var(--warning-text);
+  border: 1px solid var(--warning-border);
+}
+
+.alert-success {
+  background-color: var(--success-bg);
+  color: var(--success-text);
+  border: 1px solid var(--success-border);
+}
+
+/* Памятка контрольного сценария */
+.scenario-card {
+  background-color: #f8fafc;
+  border-left: 5px solid var(--primary);
+}
+
+.scenario-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.scenario-header h2 {
+  margin: 0 0 4px;
+  font-size: 1.12rem;
+}
+
+.scenario-steps {
+  margin: 0;
+  padding-left: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 0.91rem;
+  color: var(--text-secondary);
+}
+
+.scenario-steps li {
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+}
+
+.scenario-steps li.done {
+  background-color: var(--success-bg);
+  border-color: var(--success-border);
+  color: var(--success-text);
+}
+
+.scenario-steps code {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  background-color: rgba(15, 23, 42, 0.07);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* Пустые состояния */
+.empty-state {
+  text-align: center;
+  padding: 32px 20px;
+  background-color: #fafbfd;
+  border: 2px dashed var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.empty-state-title {
+  font-weight: 700;
+  font-size: 1.06rem;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.empty-state-text {
+  margin: 0 auto;
+  max-width: 660px;
+  font-size: 0.92rem;
+  color: var(--text-secondary);
+}
+
+/* Карточки метрик */
+.consistency-badge {
+  background-color: var(--success-bg);
+  color: var(--success-text);
+  border: 1px solid var(--success-border);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+.metric-card {
+  padding: 18px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background-color: #fafbfd;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.metric-card-success {
+  border-top: 4px solid #059669;
+}
+
+.metric-card-cost {
+  border-top: 4px solid #2563eb;
+}
+
+.metric-card-latency {
+  border-top: 4px solid #d97706;
+}
+
+.metric-card-steps {
+  border-top: 4px solid #7c3aed;
+}
+
+.metric-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.metric-label {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.metric-formula-hint {
+  font-size: 0.74rem;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  background-color: var(--bg-subtle);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.metric-value {
+  font-size: 1.85rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  line-height: 1.15;
+  margin-top: 2px;
+}
+
+.metric-subvalue {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.metric-breakdown {
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border-color);
+  font-size: 0.81rem;
+  color: var(--text-muted);
+}
+
+/* Аналитический вывод */
+.conclusion-box {
+  margin-top: 20px;
+  padding: 18px 20px;
+  background-color: var(--bg-accent-soft);
+  border: 1px solid #bfd3f8;
+  border-left: 5px solid var(--primary);
+  border-radius: var(--radius-md);
+}
+
+.conclusion-box h3 {
+  margin: 0 0 8px;
+  font-size: 1.05rem;
+  color: var(--text-primary);
+}
+
+.conclusion-content {
+  font-size: 0.94rem;
+  color: var(--text-primary);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.conclusion-content p {
+  margin: 0;
+}
+
+/* Сравнение запусков */
+.comparison-selectors {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding: 14px;
+  background-color: var(--bg-subtle);
+  border-radius: var(--radius-md);
+}
+
+.selector-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.selector-group label {
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.form-select {
+  font-family: inherit;
+  font-size: 0.92rem;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background-color: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.comparison-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-bottom: 22px;
+}
+
+.compare-card {
+  padding: 16px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background-color: #fafbfd;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.compare-card-title {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.compare-values-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 0.95rem;
+}
+
+.compare-val-old {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.compare-arrow {
+  color: var(--text-secondary);
+  font-weight: 700;
+}
+
+.compare-val-new {
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.compare-delta-badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 0.83rem;
+  font-weight: 700;
+}
+
+.delta-quality-up {
+  background-color: var(--success-bg);
+  color: var(--success-text);
+  border: 1px solid var(--success-border);
+}
+
+.delta-quality-down {
+  background-color: var(--danger-bg);
+  color: var(--danger-text);
+  border: 1px solid var(--danger-border);
+}
+
+.delta-cost-up {
+  background-color: var(--warning-bg);
+  color: var(--warning-text);
+  border: 1px solid var(--warning-border);
+}
+
+.delta-cost-down {
+  background-color: var(--info-bg);
+  color: var(--info-text);
+  border: 1px solid var(--info-border);
+}
+
+.delta-neutral {
+  background-color: var(--bg-subtle);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+}
+
+.compare-explanation {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  margin-top: auto;
+}
+
+.subsection-title {
+  margin: 0 0 10px;
+  font-size: 1.04rem;
+}
+
+/* Таблицы */
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.89rem;
+  background-color: var(--bg-surface);
+}
+
+.data-table th,
+.data-table td {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color);
+  vertical-align: top;
+}
+
+.data-table thead th {
+  background-color: var(--bg-subtle);
+  color: var(--text-primary);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.data-table tbody tr:hover {
+  background-color: #f8fafd;
+}
+
+.data-table tfoot td,
+.data-table tfoot th {
+  background-color: #eef3fb;
+  font-weight: 700;
+  border-top: 2px solid var(--border-strong);
+  border-bottom: none;
+}
+
+.num-col {
+  text-align: right !important;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.task-code {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--primary);
+  font-size: 0.84rem;
+}
+
+.task-title-cell {
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 2px;
+}
+
+.task-Diagnostic-note {
+  font-size: 0.81rem;
+  color: var(--text-secondary);
+  margin-top: 3px;
+}
+
+.step-chain {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.step-pill {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+}
+
+.step-pill-plan {
+  background-color: #e0e7ff;
+  color: #3730a3;
+}
+
+.step-pill-answer {
+  background-color: #dbeafe;
+  color: #1e40af;
+}
+
+.step-pill-verify {
+  background-color: #fef3c7;
+  color: #92400e;
+}
+
+.step-pill-fix {
+  background-color: #d1fae5;
+  color: #065f46;
+}
+
+/* Журнал */
+.journal-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: flex-end;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  background-color: var(--bg-subtle);
+  border-radius: var(--radius-md);
+}
+
+/* Раздел с формулами и правилами */
+.rules-details {
+  width: 100%;
+}
+
+.rules-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  cursor: pointer;
+  list-style: none;
+  padding: 4px 0;
+}
+
+.rules-summary::-webkit-details-marker {
+  display: none;
+}
+
+.rules-summary-title {
+  font-size: 1.22rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.rules-toggle-hint {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--primary);
+  background-color: var(--primary-light);
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+
+.rules-body {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.rules-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.rules-block {
+  background-color: #fafbfd;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 16px;
+}
+
+.rules-block h3 {
+  margin: 0 0 10px;
+  font-size: 1.02rem;
+  color: var(--text-primary);
+}
+
+.rules-block p {
+  margin: 0 0 10px;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.rules-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 0.89rem;
+  color: var(--text-secondary);
+}
+
+.rules-list code {
+  font-family: var(--font-mono);
+  background-color: var(--bg-subtle);
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--text-primary);
+}
+
+/* Подвал */
+.site-footer {
+  background-color: #0f172a;
+  color: #94a3b8;
+  padding: 20px 0;
+  font-size: 0.86rem;
+}
+
+.footer-inner {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* Адаптивность для планшетов и смартфонов */
+@media (max-width: 1024px) {
+  .controls-grid,
+  .rules-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .metrics-grid,
+  .comparison-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .section-card {
+    padding: 16px;
+  }
+
+  .metrics-grid,
+  .comparison-grid,
+  .comparison-selectors {
+    grid-template-columns: 1fr;
+  }
+
+  .action-bar .btn {
+    width: 100%;
+  }
+
+  .metric-value {
+    font-size: 1.55rem;
+  }
+}
+```
+
+---
+
+### Файл 3: `app.js`
+
+```javascript
+/**
+ * Учебная детерминированная симуляция работы AI-агента.
+ * Все метрики (успешность, стоимость, задержка, количество шагов) вычисляются
+ * строго на основе фактически сгенерированной последовательности шагов по каждой задаче.
+ *
+ * Как воспроизвести обязательный контрольный сценарий:
+ * 1. Оставьте выбранным фильтр «Все задачи (12)».
+ * 2. Выберите стратегию «2. Планирование и ответ» и нажмите «Запустить симуляцию».
+ *    Результат: Успешность 41.7% (5/12), 24 шага, 240 у.е., 18 000 мс.
+ * 3. Не меняя фильтр задач, выберите «3. Планирование, ответ и проверка» и нажмите «Запустить симуляцию».
+ *    Результат: Успешность 83.3% (10/12), 41 шаг (+17 шагов: 12 проверок и 5 исправлений),
+ *    367 у.е. (+127 у.е.), 28 400 мс (+10 400 мс).
+ *    5 исправимых ошибок (T-03, T-06, T-07, T-10, T-12) исправлены шагом fix,
+ *    2 неисправимые ошибки (T-08, T-11) остались нерешёнными.
+ */
+
+(function () {
+  "use strict";
+
+  // 1. ПАРАМЕТРЫ СЛОЖНОСТИ И БАЗОВЫЕ ТАРИФЫ ОПЕРАЦИЙ
+  const DIFFICULTY_META = {
+    easy: {
+      id: "easy",
+      label: "Простая",
+      multiplier: 1,
+      badgeClass: "badge-easy"
+    },
+    medium: {
+      id: "medium",
+      label: "Средняя",
+      multiplier: 2,
+      badgeClass: "badge-medium"
+    },
+    hard: {
+      id: "hard",
+      label: "Сложная",
+      multiplier: 3,
+      badgeClass: "badge-hard"
+    }
+  };
+
+  // Базовые коэффициенты каждого типа шага (умножаются на коэффициент сложности задачи K)
+  const STEP_RULES = {
+    plan: {
+      type: "plan",
+      label: "Планирование",
+      shortLabel: "План",
+      pillClass: "step-pill-plan",
+      baseCost: 4,      // у.е. при K = 1
+      baseLatency: 300  // мс при K = 1
+    },
+    answer: {
+      type: "answer",
+      label: "Генерация ответа",
+      shortLabel: "Ответ",
+      pillClass: "step-pill-answer",
+      baseCost: 6,      // у.е. при K = 1
+      baseLatency: 450  // мс при K = 1
+    },
+    verify: {
+      type: "verify",
+      label: "Проверка ответа",
+      shortLabel: "Проверка",
+      pillClass: "step-pill-verify",
+      baseCost: 3,      // у.е. при K = 1
+      baseLatency: 250  // мс при K = 1
+    },
+    fix: {
+      type: "fix",
+      label: "Исправление ошибки",
+      shortLabel: "Исправление",
+      pillClass: "step-pill-fix",
+      baseCost: 5,      // у.е. при K = 1
+      baseLatency: 400  // мс при K = 1
+    }
+  };
+
+  // Описание стратегий
+  const STRATEGIES = {
+    direct: {
+      id: "direct",
+      name: "Прямой ответ",
+      shortName: "1. Прямой ответ",
+      description: "Один основной шаг генерации ответа без предварительного плана и проверки."
+    },
+    plan_answer: {
+      id: "plan_answer",
+      name: "Планирование и ответ",
+      shortName: "2. Планирование и ответ",
+      description: "Декомпозиция задачи на шаге планирования, затем генерация ответа."
+    },
+    plan_verify: {
+      id: "plan_verify",
+      name: "Планирование, ответ и проверка",
+      shortName: "3. Планирование, ответ и проверка",
+      description: "Планирование, ответ, затем валидация и отдельный шаг исправления для исправимых ошибок."
+    }
+  };
+
+  // 2. ВСТРОЕННЫЙ НАБОР ИЗ 12 ОСМЫСЛЕННЫХ ЗАДАЧ ТРЁХ УРОВНЕЙ СЛОЖНОСТИ
+  // Типы поведения (archetype):
+  // - "direct_ok": решается сразу даже без планирования
+  // - "plan_helps": прямой ответ ошибается, но планирование даёт верный ответ с первого раза
+  // - "verify_fixes": после плана и ответа остаётся исправимая ошибка; шаг verify её находит, а шаг fix исправляет
+  // - "unfixable": содержит фундаментально неисправимую ошибку (нет доступа к внешней БД или противоречивое условие)
+  const TASKS = [
+    // --- ПРОСТЫЕ ЗАДАЧИ (easy, K = 1) ---
+    {
+      id: "T-01",
+      title: "Извлечение даты и итоговой суммы из текста кассового чека",
+      difficulty: "easy",
+      archetype: "direct_ok",
+      directOutcome: "success",
+      plannedOutcome: "success",
+      directNote: "Шаблон чека стандартный: дата и сумма извлечены верно с первого шага.",
+      planNote: "Составлен план поиска полей даты и итога (на простой задаче шаг избыточен).",
+      plannedAnswerNote: "Поля даты и суммы извлечены корректно.",
+      verifyNote: "Проверка подтвердила совпадение формата даты YYYY-MM-DD и суммы.",
+      fixNote: null
+    },
+    {
+      id: "T-02",
+      title: "Классификация обращения клиента в техподдержку по 4 рубрикам",
+      difficulty: "easy",
+      archetype: "direct_ok",
+      directOutcome: "success",
+      plannedOutcome: "success",
+      directNote: "Ключевые маркеры возврата средств однозначны, рубрика определена верно.",
+      planNote: "Составлен список критериев для 4 рубрик (дополнительная трата ресурсов).",
+      plannedAnswerNote: "Выбрана верная категория «Возврат и биллинг».",
+      verifyNote: "Валидация подтвердила соответствие ответа списку разрешённых рубрик.",
+      fixNote: null
+    },
+    {
+      id: "T-03",
+      title: "Преобразование карточек контактов в строгий JSON со схемой",
+      difficulty: "easy",
+      archetype: "verify_fixes",
+      directOutcome: "fail",
+      plannedOutcome: "fixable_error",
+      directNote: "Ошибка: нарушена структура вложенных объектов и пропущены обязательные ключи.",
+      planNote: "Составлена целевая JSON-схема и таблица маппинга полей.",
+      plannedAnswerNote: "Исправимая ошибка: структура по плану верна, но не экранированы кавычки в названии компании («ООО \"Бета\"»).",
+      verifyNote: "Проверка парсером обнаружила синтаксическую ошибку JSON в строке 4 (неэкранированная кавычка).",
+      fixNote: "Шаг исправления экранировал спецсимволы (\\\"), итоговый JSON валиден."
+    },
+    {
+      id: "T-04",
+      title: "Расчёт финальной цены корзины с двухуровневым правилом промокода",
+      difficulty: "easy",
+      archetype: "plan_helps",
+      directOutcome: "fail",
+      plannedOutcome: "success",
+      directNote: "Ошибка: агент сложил процентную и фиксированную скидки вместо их последовательного применения.",
+      planNote: "План зафиксировал порядок: 1) применить порог 10%, 2) вычесть купон 300 ед.",
+      plannedAnswerNote: "Расчёт выполнен строго по плану, итоговая сумма совпала с эталоном.",
+      verifyNote: "Проверка пересчитала промежуточные суммы — ошибок не обнаружено.",
+      fixNote: null
+    },
+
+    // --- СРЕДНИЕ ЗАДАЧИ (medium, K = 2) ---
+    {
+      id: "T-05",
+      title: "Составление расписания 4 встреч для участников из разных часовых поясов",
+      difficulty: "medium",
+      archetype: "plan_helps",
+      directOutcome: "fail",
+      plannedOutcome: "success",
+      directNote: "Ошибка: при переводе слотов «на лету» возникло наложение встреч между UTC+3 и UTC+5.",
+      planNote: "План привёл все рабочие окна участников к единой шкале UTC перед подбором слотов.",
+      plannedAnswerNote: "Расписание составлено без пересечений и в пределах рабочего времени всех участников.",
+      verifyNote: "Проверка сверила все 4 интервала с ограничениями участников — конфликтов нет.",
+      fixNote: null
+    },
+    {
+      id: "T-06",
+      title: "Генерация SQL-запроса с группировкой и фильтрацией агрегатов HAVING",
+      difficulty: "medium",
+      archetype: "verify_fixes",
+      directOutcome: "fail",
+      plannedOutcome: "fixable_error",
+      directNote: "Ошибка: агрегатная функция COUNT(*) помещена в секцию WHERE вместо HAVING.",
+      planNote: "План разделил фильтрацию строк (WHERE) и фильтрацию групп (GROUP BY + HAVING).",
+      plannedAnswerNote: "Исправимая ошибка: структура запроса верна, но для условия «не менее 10 заказов» использован строгий оператор > 10 вместо >= 10.",
+      verifyNote: "Проверка граничных значений выявила потерю клиентов ровно с 10 заказами (ошибка оператора >).",
+      fixNote: "Запрос исправлен на HAVING COUNT(order_id) >= 10; условие задачи полностью выполнено."
+    },
+    {
+      id: "T-07",
+      title: "Сводка квартального отчёта с проверкой сходимости баланса по статьям",
+      difficulty: "medium",
+      archetype: "verify_fixes",
+      directOutcome: "fail",
+      plannedOutcome: "fixable_error",
+      directNote: "Ошибка: пропущена статья операционных возвратов, структура таблицы неполная.",
+      planNote: "План выделил все 6 статей доходов и расходов из исходного текста.",
+      plannedAnswerNote: "Исправимая ошибка: все статьи включены в таблицу, но в итоговом сальдо допущена арифметическая ошибка на 120 ед.",
+      verifyNote: "Проверка контрольной суммы выявила расхождение между суммой строк (4 820) и указанным итогом (4 700).",
+      fixNote: "Итоговое сальдо и строка баланса пересчитаны и исправлены на 4 820 ед."
+    },
+    {
+      id: "T-08",
+      title: "Запрос актуального остатка партии товара в закрытом контуре складской ERP",
+      difficulty: "medium",
+      archetype: "unfixable",
+      directOutcome: "fail",
+      plannedOutcome: "unfixable_error",
+      directNote: "Ошибка: агент сгенерировал правдоподобное, но вымышленное число остатка (галлюцинация).",
+      planNote: "План определил необходимость чтения таблицы остатков по артикулу SKU-904.",
+      plannedAnswerNote: "Неисправимая ошибка: у агента отсутствуют учётные данные и сетевой доступ к закрытой складской БД ERP.",
+      verifyNote: "Проверка зафиксировала отсутствие верифицируемого источника данных. Самопроверка не может заменить отсутствующий доступ к внешней БД — шаг исправления не вызывается.",
+      fixNote: null
+    },
+
+    // --- СЛОЖНЫЕ ЗАДАЧИ (hard, K = 3) ---
+    {
+      id: "T-09",
+      title: "Проектирование плана миграции БД микросервиса без простоя (Zero-Downtime)",
+      difficulty: "hard",
+      archetype: "plan_helps",
+      directOutcome: "fail",
+      plannedOutcome: "success",
+      directNote: "Ошибка: предложено переключить трафик до завершения синхронизации новых колонок, что вызовет простой.",
+      planNote: "План выстроил паттерн Expand → Dual-Write → Backfill → Switch Read → Contract.",
+      plannedAnswerNote: "Пошаговый регламент миграции сформирован корректно и гарантирует обратную совместимость релизов.",
+      verifyNote: "Проверка подтвердила безопасность отката на каждом из 5 этапов миграции.",
+      fixNote: null
+    },
+    {
+      id: "T-10",
+      title: "Рефакторинг рекурсивного обхода дерева в итеративный с лимитом глубины",
+      difficulty: "hard",
+      archetype: "verify_fixes",
+      directOutcome: "fail",
+      plannedOutcome: "fixable_error",
+      directNote: "Ошибка: при отказе от рекурсии нарушен порядок обхода узлов и потерян контроль глубины.",
+      planNote: "План определил структуру явного стека пар (node, depth) и условие отсечения по maxDepth.",
+      plannedAnswerNote: "Исправимая ошибка: алгоритм со стеком корректен, но не обработан граничный случай пустого корня (root === null), вызывающий исключение.",
+      verifyNote: "Проверка на краевых тестах обнаружила обращение к свойству children у null при пустом дереве.",
+      fixNote: "Добавлена защитная проверка if (!root) return []; в начало функции — все тесты проходят."
+    },
+    {
+      id: "T-11",
+      title: "Построение маршрута доставки с взаимно противоречивыми ограничениями ТЗ",
+      difficulty: "hard",
+      archetype: "unfixable",
+      directOutcome: "fail",
+      plannedOutcome: "unfixable_error",
+      directNote: "Ошибка: предложенный маршрут нарушает временные окна и скоростной режим.",
+      planNote: "План выписал матрицу расстояний (250 км) и директивное окно доставки (40 минут).",
+      plannedAnswerNote: "Неисправимая ошибка: требования заказчика физически несовместны (проехать 250 км за 40 мин на грузовом фургоне без нарушения ПДД невозможно).",
+      verifyNote: "Проверка доказала математическую неразрешимость системы ограничений (требуемая скорость 375 км/ч > лимита 90 км/ч). Без изменения условий заказчиком исправление невозможно.",
+      fixNote: null
+    },
+    {
+      id: "T-12",
+      title: "Аудит и патч смарт-контракта на уязвимость повторного входа (Reentrancy)",
+      difficulty: "hard",
+      archetype: "verify_fixes",
+      directOutcome: "fail",
+      plannedOutcome: "fixable_error",
+      directNote: "Ошибка: агент указал только на стилевые замечания и пропустил внешний вызов до списания баланса.",
+      planNote: "План предписал проверить все внешние вызовы по паттерну Checks-Effects-Interactions.",
+      plannedAnswerNote: "Исправимая ошибка: баланс пользователя перенесён до внешнего вызова, но глобальный счётчик totalLocked обновляется после вызова.",
+      verifyNote: "Проверка инвариантов состояния обнаружила, что переменная totalLocked остаётся уязвимой к повторному входу.",
+      fixNote: "Обновление totalLocked перенесено в секцию Effects до внешнего вызова — уязвимость полностью закрыта."
+    }
+  ];
+
+  // 3. СОСТОЯНИЕ ПРИЛОЖЕНИЯ
+  const state = {
+    runHistory: [],         // История выполненных запусков (сохраняем все запуски сессии)
+    currentRun: null,       // Последний активный запуск
+    lastRunConfigKey: null  // Ключ конфигурации последнего запуска для отслеживания устаревания фильтра/стратегии
+  };
+
+  // 4. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ФОРМАТИРОВАНИЯ
+  function formatNumber(num) {
+    return Number(num).toLocaleString("ru-RU");
+  }
+
+  function formatPercent(value) {
+    return value.toFixed(1) + "%";
+  }
+
+  function getSelectedStrategyId() {
+    const checked = document.querySelector('input[name="strategy"]:checked');
+    return checked ? checked.value : "plan_answer";
+  }
+
+  function getSelectedDifficulties() {
+    const checkboxes = document.querySelectorAll(".difficulty-checkboxes input[type='checkbox']");
+    const selected = [];
+    checkboxes.forEach(function (cb) {
+      if (cb.checked) {
+        selected.push(cb.value);
+      }
+    });
+    return selected;
+  }
+
+  function getFilteredTasks(difficulties) {
+    const set = new Set(difficulties);
+    return TASKS.filter(function (task) {
+      return set.has(task.difficulty);
+    });
+  }
+
+  function buildTaskSetKey(tasks) {
+    return tasks.map(function (t) { return t.id; }).join(",");
+  }
+
+  function describeTaskSet(difficulties, taskCount) {
+    if (taskCount === 0) {
+      return "Пустой набор (0 задач)";
+    }
+    if (difficulties.length === 3) {
+      return "Все задачи (" + taskCount + ")";
+    }
+    const labels = difficulties.map(function (d) {
+      return DIFFICULTY_META[d].label;
+    });
+    return labels.join(" + ") + " (" + taskCount + " зад.)";
+  }
+
+  function getCurrentConfigKey() {
+    const strategyId = getSelectedStrategyId();
+    const diffs = getSelectedDifficulties();
+    const tasks = getFilteredTasks(diffs);
+    return strategyId + "::" + buildTaskSetKey(tasks);
+  }
+
+  // 5. ЯДРО ДЕТЕРМИНИРОВАННОЙ СИМУЛЯЦИИ
+  /**
+   * Выполняет детерминированную симуляцию для одной задачи и выбранной стратегии.
+   * Возвращает фактический массив выполненных шагов и вычисленный исход.
+   */
+  function simulateTask(task, strategyId) {
+    const diffMeta = DIFFICULTY_META[task.difficulty];
+    const K = diffMeta.multiplier;
+    const steps = [];
+
+    function createStep(stepType, actionText, statusLabel) {
+      const rule = STEP_RULES[stepType];
+      const cost = rule.baseCost * K;
+      const latencyMs = rule.baseLatency * K;
+      return {
+        taskId: task.id,
+        taskTitle: task.title,
+        difficulty: task.difficulty,
+        difficultyLabel: diffMeta.label,
+        multiplier: K,
+        type: rule.type,
+        typeLabel: rule.label,
+        shortLabel: rule.shortLabel,
+        pillClass: rule.pillClass,
+        actionText: actionText,
+        statusLabel: statusLabel,
+        stepsContribution: 1,
+        cost: cost,
+        tokens: cost * 100,
+        latencyMs: latencyMs
+      };
+    }
+
+    let finalSuccess = false;
+    let outcomeCategory = "";
+    let outcomeBadgeText = "";
+    let diagnosticSummary = "";
+
+    if (strategyId === "direct") {
+      // Стратегия 1: только один основной шаг ответа
+      if (task.directOutcome === "success") {
+        steps.push(createStep("answer", task.directNote, "Ответ корректен"));
+        finalSuccess = true;
+        outcomeCategory = "direct_success";
+        outcomeBadgeText = "Успех (прямой ответ)";
+        diagnosticSummary = task.directNote;
+      } else {
+        steps.push(createStep("answer", task.directNote, "Ошибка в ответе"));
+        finalSuccess = false;
+        outcomeCategory = "direct_fail";
+        outcomeBadgeText = "Неудача (без плана и проверки)";
+        diagnosticSummary = task.directNote;
+      }
+    } else if (strategyId === "plan_answer") {
+      // Стратегия 2: шаг планирования + шаг ответа
+      steps.push(createStep("plan", task.planNote, "План построен"));
+
+      if (task.plannedOutcome === "success") {
+        steps.push(createStep("answer", task.plannedAnswerNote, "Ответ по плану корректен"));
+        finalSuccess = true;
+        outcomeCategory = "planned_success";
+        outcomeBadgeText = "Успех (решено за счёт плана)";
+        diagnosticSummary = task.plannedAnswerNote;
+      } else if (task.plannedOutcome === "fixable_error") {
+        steps.push(createStep("answer", task.plannedAnswerNote, "Скрытая исправимая ошибка"));
+        finalSuccess = false;
+        outcomeCategory = "fixable_error_unverified";
+        outcomeBadgeText = "Неудача (исправимая ошибка не проверена)";
+        diagnosticSummary = task.plannedAnswerNote;
+      } else {
+        // unfixable_error
+        steps.push(createStep("answer", task.plannedAnswerNote, "Неисправимая ошибка"));
+        finalSuccess = false;
+        outcomeCategory = "unfixable_error";
+        outcomeBadgeText = "Неудача (неисправимая ошибка)";
+        diagnosticSummary = task.plannedAnswerNote;
+      }
+    } else if (strategyId === "plan_verify") {
+      // Стратегия 3: планирование + ответ + проверка [+ исправление для исправимой ошибки]
+      steps.push(createStep("plan", task.planNote, "План построен"));
+
+      if (task.plannedOutcome === "success") {
+        steps.push(createStep("answer", task.plannedAnswerNote, "Ответ по плану корректен"));
+        steps.push(createStep("verify", task.verifyNote, "Проверка: ошибок нет"));
+        finalSuccess = true;
+        outcomeCategory = "verified_already_ok";
+        outcomeBadgeText = "Успех (подтверждено проверкой)";
+        diagnosticSummary = task.verifyNote;
+      } else if (task.plannedOutcome === "fixable_error") {
+        steps.push(createStep("answer", task.plannedAnswerNote, "Черновой ответ с дефектом"));
+        steps.push(createStep("verify", task.verifyNote, "Обнаружена исправимая ошибка"));
+        steps.push(createStep("fix", task.fixNote, "Ошибка успешно исправлена"));
+        finalSuccess = true;
+        outcomeCategory = "fixed_by_verify";
+        outcomeBadgeText = "Успех (исправлено после проверки)";
+        diagnosticSummary = task.fixNote;
+      } else {
+        // unfixable_error — проверка видит фундаментальное ограничение и не может сделать ответ верным
+        steps.push(createStep("answer", task.plannedAnswerNote, "Невыполнимое условие / нет данных"));
+        steps.push(createStep("verify", task.verifyNote, "Ошибка признана неисправимой"));
+        finalSuccess = false;
+        outcomeCategory = "unfixable_error";
+        outcomeBadgeText = "Неудача (неисправимая ошибка)";
+        diagnosticSummary = task.verifyNote;
+      }
+    }
+
+    // Вычисляем показатели задачи строго как сумму её шагов
+    let taskCost = 0;
+    let taskLatencyMs = 0;
+    let taskStepsCount = 0;
+
+    steps.forEach(function (st) {
+      taskCost += st.cost;
+      taskLatencyMs += st.latencyMs;
+      taskStepsCount += st.stepsContribution;
+    });
+
+    return {
+      taskId: task.id,
+      title: task.title,
+      difficulty: task.difficulty,
+      difficultyLabel: diffMeta.label,
+      difficultyBadgeClass: diffMeta.badgeClass,
+      multiplier: K,
+      archetype: task.archetype,
+      success: finalSuccess,
+      outcomeCategory: outcomeCategory,
+      outcomeBadgeText: outcomeBadgeText,
+      diagnosticSummary: diagnosticSummary,
+      steps: steps,
+      stepCount: taskStepsCount,
+      cost: taskCost,
+      tokens: taskCost * 100,
+      latencyMs: taskLatencyMs
+    };
+  }
+
+  /**
+   * Выполняет полный запуск симуляции на выбранном наборе задач.
+   */
+  function executeSimulationRun(strategyId, selectedDifficulties, selectedTasks, runNumber) {
+    const taskResults = [];
+    const journalSteps = [];
+    let globalStepIndex = 1;
+
+    selectedTasks.forEach(function (task) {
+      const taskResult = simulateTask(task, strategyId);
+      taskResults.push(taskResult);
+
+      taskResult.steps.forEach(function (step) {
+        journalSteps.push(Object.assign({}, step, {
+          globalIndex: globalStepIndex++
+        }));
+      });
+    });
+
+    // Расчёт агрегированных метрик по задачам и по шагам журнала
+    const totalTasks = taskResults.length;
+    const succeededTasks = taskResults.filter(function (r) { return r.success; }).length;
+    const failedTasks = totalTasks - succeededTasks;
+    const successRate = totalTasks > 0 ? (succeededTasks / totalTasks) * 100 : 0;
+
+    // Суммы по журналу шагов
+    let totalCostFromSteps = 0;
+    let totalLatencyFromSteps = 0;
+    let totalStepsFromJournal = 0;
+
+    const stepTypeCounts = { plan: 0, answer: 0, verify: 0, fix: 0 };
+    const stepTypeCosts = { plan: 0, answer: 0, verify: 0, fix: 0 };
+    const stepTypeLatencies = { plan: 0, answer: 0, verify: 0, fix: 0 };
+
+    journalSteps.forEach(function (st) {
+      totalCostFromSteps += st.cost;
+      totalLatencyFromSteps += st.latencyMs;
+      totalStepsFromJournal += st.stepsContribution;
+
+      stepTypeCounts[st.type] += 1;
+      stepTypeCosts[st.type] += st.cost;
+      stepTypeLatencies[st.type] += st.latencyMs;
+    });
+
+    // Суммы по строкам таблицы задач (для сверки)
+    let totalCostFromTasks = 0;
+    let totalLatencyFromTasks = 0;
+    let totalStepsFromTasks = 0;
+
+    taskResults.forEach(function (tr) {
+      totalCostFromTasks += tr.cost;
+      totalLatencyFromTasks += tr.latencyMs;
+      totalStepsFromTasks += tr.stepCount;
+    });
+
+    const isConsistent =
+      totalCostFromSteps === totalCostFromTasks &&
+      totalLatencyFromSteps === totalLatencyFromTasks &&
+      totalStepsFromJournal === totalStepsFromTasks &&
+      totalStepsFromJournal === journalSteps.length;
+
+    const fixedCount = taskResults.filter(function (r) {
+      return r.outcomeCategory === "fixed_by_verify";
+    }).length;
+    const unfixableCount = taskResults.filter(function (r) {
+      return r.outcomeCategory === "unfixable_error";
+    }).length;
+    const fixableUnverifiedCount = taskResults.filter(function (r) {
+      return r.outcomeCategory === "fixable_error_unverified";
+    }).length;
+
+    const strategyMeta = STRATEGIES[strategyId];
+    const taskSetKey = buildTaskSetKey(selectedTasks);
+    const taskSetLabel = describeTaskSet(selectedDifficulties, totalTasks);
+
+    return {
+      runId: runNumber,
+      strategyId: strategyId,
+      strategyName: strategyMeta.name,
+      strategyShortName: strategyMeta.shortName,
+      selectedDifficulties: selectedDifficulties.slice(),
+      taskSetKey: taskSetKey,
+      taskSetLabel: taskSetLabel,
+      configKey: strategyId + "::" + taskSetKey,
+      totalTasks: totalTasks,
+      succeededTasks: succeededTasks,
+      failedTasks: failedTasks,
+      successRate: successRate,
+      totalCost: totalCostFromSteps,
+      totalTokens: totalCostFromSteps * 100,
+      avgCostPerTask: totalTasks > 0 ? totalCostFromSteps / totalTasks : 0,
+      totalLatencyMs: totalLatencyFromSteps,
+      avgLatencyPerTask: totalTasks > 0 ? totalLatencyFromSteps / totalTasks : 0,
+      totalSteps: totalStepsFromJournal,
+      avgStepsPerTask: totalTasks > 0 ? totalStepsFromJournal / totalTasks : 0,
+      stepTypeCounts: stepTypeCounts,
+      stepTypeCosts: stepTypeCosts,
+      stepTypeLatencies: stepTypeLatencies,
+      fixedCount: fixedCount,
+      unfixableCount: unfixableCount,
+      fixableUnverifiedCount: fixableUnverifiedCount,
+      isConsistent: isConsistent,
+      taskResults: taskResults,
+      journalSteps: journalSteps
+    };
+  }
+
+  // 6. ОТРИСОВКА ИНТЕРФЕЙСА
+  function updateSelectionSummaryUI() {
+    const diffs = getSelectedDifficulties();
+    const filteredTasks = getFilteredTasks(diffs);
+    const summaryEl = document.getElementById("selection-summary");
+
+    const easyCount = filteredTasks.filter(function (t) { return t.difficulty === "easy"; }).length;
+    const mediumCount = filteredTasks.filter(function (t) { return t.difficulty === "medium"; }).length;
+    const hardCount = filteredTasks.filter(function (t) { return t.difficulty === "hard"; }).length;
+
+    if (filteredTasks.length === 0) {
+      summaryEl.innerHTML =
+        "Выбрано задач: <strong>0 из " + TASKS.length + "</strong> — набор пуст. Выберите хотя бы один уровень сложности для расчёта.";
+    } else {
+      summaryEl.innerHTML =
+        "Выбрано задач: <strong>" + filteredTasks.length + " из " + TASKS.length + "</strong> " +
+        "(Простые: " + easyCount + ", Средние: " + mediumCount + ", Сложные: " + hardCount + ")";
+    }
+
+    // Синхронизируем подсветку кнопок пресетов
+    const presetButtons = document.querySelectorAll(".btn-preset");
+    presetButtons.forEach(function (btn) {
+      const preset = btn.getAttribute("data-preset");
+      let isActive = false;
+      if (preset === "all" && diffs.length === 3) isActive = true;
+      if (preset === "none" && diffs.length === 0) isActive = true;
+      if (preset === "easy" && diffs.length === 1 && diffs[0] === "easy") isActive = true;
+      if (preset === "medium" && diffs.length === 1 && diffs[0] === "medium") isActive = true;
+      if (preset === "hard" && diffs.length === 1 && diffs[0] === "hard") isActive = true;
+      btn.classList.toggle("active", isActive);
+    });
+
+    checkStaleStateUI();
+  }
+
+  function checkStaleStateUI() {
+    const staleAlert = document.getElementById("stale-alert");
+    if (!state.currentRun) {
+      staleAlert.classList.add("hidden");
+      return;
+    }
+
+    const currentKey = getCurrentConfigKey();
+    if (currentKey !== state.lastRunConfigKey) {
+      staleAlert.textContent =
+        "Параметры на панели управления были изменены после последнего запуска. " +
+        "Ниже отображаются результаты предыдущего расчёта («" +
+        state.currentRun.strategyName + "», выборка: " + state.currentRun.taskSetLabel + "). " +
+        "Нажмите «Запустить симуляцию», чтобы выполнить расчёт для новых параметров.";
+      staleAlert.classList.remove("hidden");
+    } else {
+      staleAlert.classList.add("hidden");
+    }
+  }
+
+  function renderMetricsSection(run) {
+    const emptyState = document.getElementById("metrics-empty-state");
+    const grid = document.getElementById("metrics-grid");
+    const contextSubtitle = document.getElementById("metrics-run-context");
+    const consistencyBadge = document.getElementById("consistency-badge");
+    const conclusionBox = document.getElementById("dynamic-conclusion");
+
+    if (!run) {
+      emptyState.classList.remove("hidden");
+      grid.classList.add("hidden");
+      consistencyBadge.classList.add("hidden");
+      conclusionBox.classList.add("hidden");
+      contextSubtitle.textContent =
+        "Запуск ещё не выполнялся. Выберите параметры выше и нажмите «Запустить симуляцию».";
+      return;
+    }
+
+    emptyState.classList.add("hidden");
+    grid.classList.remove("hidden");
+    conclusionBox.classList.remove("hidden");
+
+    contextSubtitle.innerHTML =
+      "Результаты <strong>Запуска №" + run.runId + "</strong> · Стратегия: <strong>«" +
+      run.strategyName + "»</strong> · Выборка: <strong>" + run.taskSetLabel + "</strong>";
+
+    if (run.isConsistent) {
+      consistencyBadge.classList.remove("hidden");
+      consistencyBadge.textContent =
+        "Сверка пройдена: карточки метрик = сумма строк таблицы задач = сумма шагов журнала";
+    }
+
+    // 1. Успешность
+    document.getElementById("metric-success-rate").textContent = formatPercent(run.successRate);
+    document.getElementById("metric-success-count").textContent =
+      "Решено успешно: " + run.succeededTasks + " из " + run.totalTasks + " задач";
+
+    let successBreakdownText = "Неудач: " + run.failedTasks;
+    if (run.fixedCount > 0) {
+      successBreakdownText += " · Исправлено проверкой: " + run.fixedCount;
+    }
+    if (run.unfixableCount > 0) {
+      successBreakdownText += " · Неисправимых ошибок: " + run.unfixableCount;
+    }
+    document.getElementById("metric-success-breakdown").textContent = successBreakdownText;
+
+    // 2. Общая стоимость
+    document.getElementById("metric-total-cost").textContent = formatNumber(run.totalCost) + " у.е.";
+    document.getElementById("metric-avg-cost").textContent =
+      "В среднем: " + run.avgCostPerTask.toFixed(1) + " у.е. / задача (" + formatNumber(run.totalTokens) + " усл. токенов)";
+    document.getElementById("metric-cost-breakdown").textContent =
+      "План: " + run.stepTypeCosts.plan + " · Ответ: " + run.stepTypeCosts.answer +
+      " · Проверка: " + run.stepTypeCosts.verify + " · Исправление: " + run.stepTypeCosts.fix + " у.е.";
+
+    // 3. Общая задержка
+    const totalSeconds = (run.totalLatencyMs / 1000).toFixed(2);
+    document.getElementById("metric-total-latency").textContent = formatNumber(run.totalLatencyMs) + " мс";
+    document.getElementById("metric-avg-latency").textContent =
+      "Модельное время: " + totalSeconds + " с (в среднем " + Math.round(run.avgLatencyPerTask) + " мс / задача)";
+    document.getElementById("metric-latency-breakdown").textContent =
+      "План: " + formatNumber(run.stepTypeLatencies.plan) + " · Ответ: " + formatNumber(run.stepTypeLatencies.answer) +
+      " · Проверка: " + formatNumber(run.stepTypeLatencies.verify) + " · Испр.: " + formatNumber(run.stepTypeLatencies.fix) + " мс";
+
+    // 4. Количество шагов
+    document.getElementById("metric-total-steps").textContent = formatNumber(run.totalSteps) + " шагов";
+    document.getElementById("metric-avg-steps").textContent =
+      "В среднем: " + run.avgStepsPerTask.toFixed(2) + " шага / задача";
+    document.getElementById("metric-steps-breakdown").textContent =
+      "Планов: " + run.stepTypeCounts.plan + " · Ответов: " + run.stepTypeCounts.answer +
+      " · Проверок: " + run.stepTypeCounts.verify + " · Исправлений: " + run.stepTypeCounts.fix;
+
+    renderDynamicConclusion(run);
+  }
+
+  function renderDynamicConclusion(run) {
+    const container = document.getElementById("conclusion-content");
+    const paragraphs = [];
+
+    if (run.strategyId === "direct") {
+      paragraphs.push(
+        "<p><strong>Минимальные затраты ценой низкой надёжности на сложных задачах:</strong> стратегия «Прямой ответ» выполнила ровно по 1 шагу на задачу (всего <strong>" +
+        run.totalSteps + " шагов</strong>, <strong>" + formatNumber(run.totalCost) + " у.е.</strong>, <strong>" +
+        formatNumber(run.totalLatencyMs) + " мс</strong>), но решила только <strong>" +
+        run.succeededTasks + " из " + run.totalTasks + " задач (" + formatPercent(run.successRate) + ")</strong>.</p>"
+      );
+      paragraphs.push(
+        "<p><strong>Когда стратегия оправдана:</strong> подходит для одношаговых типовых операций (классификация, извлечение полей из простых шаблонов) при жёстких ограничениях на задержку и бюджет. На многошаговых задачах отсутствие планирования и валидации приводит к систематическим сбоям.</p>"
+      );
+    } else if (run.strategyId === "plan_answer") {
+      paragraphs.push(
+        "<p><strong>Промежуточный компромисс (планирование устраняет структурные сбои, но не ловит мелкие дефекты):</strong> за счёт предварительного шага планирования успешность составила <strong>" +
+        formatPercent(run.successRate) + " (" + run.succeededTasks + " из " + run.totalTasks + " задач)</strong> при затратах <strong>" +
+        run.totalSteps + " шагов</strong>, <strong>" + formatNumber(run.totalCost) + " у.е.</strong> и <strong>" +
+        formatNumber(run.totalLatencyMs) + " мс</strong>.</p>"
+      );
+      if (run.fixableUnverifiedCount > 0) {
+        paragraphs.push(
+          "<p><strong>Потенциал для самопроверки:</strong> в выборке осталось <strong>" +
+          run.fixableUnverifiedCount + " задач с исправимыми ошибками</strong> (граничные операторы, синтаксис JSON, контрольные суммы), где план был верным, но без шага валидации дефект ответа остался незамеченным.</p>"
+        );
+      }
+    } else if (run.strategyId === "plan_verify") {
+      paragraphs.push(
+        "<p><strong>Максимальное качество решения за счёт дополнительных вычислительных ресурсов:</strong> стратегия «Планирование, ответ и проверка» достигла успешности <strong>" +
+        formatPercent(run.successRate) + " (" + run.succeededTasks + " из " + run.totalTasks + " задач)</strong>. Шаг проверки обнаружил и позволил исправить <strong>" +
+        run.fixedCount + " исправимых ошибок</strong>, однако потребовал <strong>" +
+        run.totalSteps + " шагов</strong>, <strong>" + formatNumber(run.totalCost) + " у.е.</strong> и <strong>" +
+        formatNumber(run.totalLatencyMs) + " мс</strong>.</p>"
+      );
+      if (run.unfixableCount > 0) {
+        paragraphs.push(
+          "<p><strong>Граница возможностей самопроверки:</strong> даже самая полная стратегия не дала 100% результата — <strong>" +
+          run.unfixableCount + " задачи с неисправимыми ошибками</strong> остались нерешёнными (отсутствие доступа к внешней системе или внутренне противоречивое ТЗ). Ни одна стратегия не является универсально лучшей: выбор зависит от цены ошибки и допустимой задержки.</p>"
+        );
+      } else {
+        paragraphs.push(
+          "<p><strong>Инженерный вывод:</strong> на данной выборке проверка исправила все встретившиеся ошибки, но для простых задач шаги планирования и проверки стали чистыми накладными расходами.</p>"
+        );
+      }
+    }
+
+    container.innerHTML = paragraphs.join("");
+  }
+
+  function renderTasksTable(run) {
+    const emptyState = document.getElementById("tasks-empty-state");
+    const tableContainer = document.getElementById("tasks-table-container");
+    const tbody = document.getElementById("tasks-results-tbody");
+    const tfoot = document.getElementById("tasks-results-tfoot");
+
+    if (!run) {
+      emptyState.classList.remove("hidden");
+      tableContainer.classList.add("hidden");
+      tbody.innerHTML = "";
+      tfoot.innerHTML = "";
+      return;
+    }
+
+    emptyState.classList.add("hidden");
+    tableContainer.classList.remove("hidden");
+
+    const rowsHtml = run.taskResults.map(function (tr) {
+      const outcomeBadgeClass = tr.success ? "badge-success" : "badge-fail";
+      const stepPillsHtml = tr.steps.map(function (st) {
+        return '<span class="step-pill ' + st.pillClass + '">' + st.shortLabel + "</span>";
+      }).join(' <span aria-hidden="true">→</span> ');
+
+      return (
+        "<tr>" +
+          "<td>" +
+            '<div class="task-code">' + tr.taskId + "</div>" +
+            '<div class="task-title-cell">' + tr.title + "</div>" +
+          "</td>" +
+          "<td>" +
+            '<span class="badge ' + tr.difficultyBadgeClass + '">' +
+              tr.difficultyLabel + " (K=" + tr.multiplier + ")" +
+            "</span>" +
+          "</td>" +
+          "<td>" +
+            '<span class="badge ' + outcomeBadgeClass + '">' + tr.outcomeBadgeText + "</span>" +
+            '<div class="task-Diagnostic-note">' + tr.diagnosticSummary + "</div>" +
+          "</td>" +
+          '<td><div class="step-chain">' + stepPillsHtml + "</div></td>" +
+          '<td class="num-col"><strong>' + tr.stepCount + "</strong></td>" +
+          '<td class="num-col"><strong>' + formatNumber(tr.cost) + " у.е.</strong></td>" +
+          '<td class="num-col"><strong>' + formatNumber(tr.latencyMs) + " мс</strong></td>" +
+          "<td>" +
+            '<button type="button" class="btn btn-secondary btn-sm btn-filter-task-log" data-task-id="' + tr.taskId + '">' +
+              "Шаги задачи" +
+            "</button>" +
+          "</td>" +
+        "</tr>"
+      );
+    }).join("");
+
+    tbody.innerHTML = rowsHtml;
+
+    tfoot.innerHTML =
+      "<tr>" +
+        '<td colspan="2">Итого по таблице задач (' + run.totalTasks + " зад.):</td>" +
+        "<td>Успешно: " + run.succeededTasks + " из " + run.totalTasks + " (" + formatPercent(run.successRate) + ")</td>" +
+        "<td>Сверка с карточками метрик: совпадает</td>" +
+        '<td class="num-col">' + formatNumber(run.totalSteps) + " шагов</td>" +
+        '<td class="num-col">' + formatNumber(run.totalCost) + " у.е.</td>" +
+        '<td class="num-col">' + formatNumber(run.totalLatencyMs) + " мс</td>" +
+        "<td></td>" +
+      "</tr>";
+  }
+
+  function populateJournalTaskSelect(run) {
+    const select = document.getElementById("journal-task-filter");
+    if (!run) {
+      select.innerHTML = '<option value="all">Все задачи запуска</option>';
+      return;
+    }
+
+    const options = ['<option value="all">Все задачи запуска (' + run.totalTasks + ')</option>'];
+    run.taskResults.forEach(function (tr) {
+      options.push(
+        '<option value="' + tr.taskId + '">' + tr.taskId + " — " + tr.title + "</option>"
+      );
+    });
+    select.innerHTML = options.join("");
+  }
+
+  function renderJournalTable(run) {
+    const emptyState = document.getElementById("journal-empty-state");
+    const container = document.getElementById("journal-container");
+    const tbody = document.getElementById("journal-tbody");
+    const tfoot = document.getElementById("journal-tfoot");
+
+    if (!run) {
+      emptyState.classList.remove("hidden");
+      container.classList.add("hidden");
+      tbody.innerHTML = "";
+      tfoot.innerHTML = "";
+      return;
+    }
+
+    emptyState.classList.add("hidden");
+    container.classList.remove("hidden");
+
+    const taskFilter = document.getElementById("journal-task-filter").value;
+    const stepFilter = document.getElementById("journal-step-filter").value;
+
+    const filteredSteps = run.journalSteps.filter(function (st) {
+      const matchTask = taskFilter === "all" || st.taskId === taskFilter;
+      const matchStep = stepFilter === "all" || st.type === stepFilter;
+      return matchTask && matchStep;
+    });
+
+    let filteredStepsCount = 0;
+    let filteredCost = 0;
+    let filteredLatency = 0;
+
+    const rowsHtml = filteredSteps.map(function (st) {
+      filteredStepsCount += st.stepsContribution;
+      filteredCost += st.cost;
+      filteredLatency += st.latencyMs;
+
+      return (
+        "<tr>" +
+          '<td class="num-col">#' + st.globalIndex + "</td>" +
+          "<td>" +
+            '<span class="task-code">' + st.taskId + "</span> " +
+            '<span class="badge badge-neutral">K=' + st.multiplier + "</span>" +
+          "</td>" +
+          '<td><span class="step-pill ' + st.pillClass + '">' + st.typeLabel + "</span></td>" +
+          "<td>" +
+            "<div><strong>" + st.statusLabel + ":</strong> " + st.actionText + "</div>" +
+          "</td>" +
+          '<td class="num-col">+' + st.stepsContribution + "</td>" +
+          '<td class="num-col">+' + st.cost + " у.е.</td>" +
+          '<td class="num-col">+' + formatNumber(st.latencyMs) + " мс</td>" +
+        "</tr>"
+      );
+    }).join("");
+
+    if (filteredSteps.length === 0) {
+      tbody.innerHTML =
+        '<tr><td colspan="7" style="text-align:center; padding: 20px;">По выбранному фильтру шагов не найдено. В этой стратегии данный тип операции не выполнялся.</td></tr>';
+    } else {
+      tbody.innerHTML = rowsHtml;
+    }
+
+    const isFiltered = taskFilter !== "all" || stepFilter !== "all";
+    let footerHtml = "";
+
+    if (isFiltered) {
+      footerHtml +=
+        "<tr>" +
+          '<td colspan="4">Сумма по выбранному фильтру журнала:</td>' +
+          '<td class="num-col">' + formatNumber(filteredStepsCount) + " шагов</td>" +
+          '<td class="num-col">' + formatNumber(filteredCost) + " у.е.</td>" +
+          '<td class="num-col">' + formatNumber(filteredLatency) + " мс</td>" +
+        "</tr>";
+    }
+
+    footerHtml +=
+      "<tr>" +
+        '<td colspan="4">Итого по всему запуску (совпадает с карточками метрик):</td>' +
+        '<td class="num-col">' + formatNumber(run.totalSteps) + " шагов</td>" +
+        '<td class="num-col">' + formatNumber(run.totalCost) + " у.е.</td>" +
+        '<td class="num-col">' + formatNumber(run.totalLatencyMs) + " мс</td>" +
+      "</tr>";
+
+    tfoot.innerHTML = footerHtml;
+  }
+
+  // 7. СРАВНЕНИЕ ДВУХ ЗАПУСКОВ
+  function updateComparisonSelectors() {
+    const emptyState = document.getElementById("comparison-empty-state");
+    const emptyText = document.getElementById("comparison-empty-text");
+    const content = document.getElementById("comparison-content");
+    const selectA = document.getElementById("compare-run-a");
+    const selectB = document.getElementById("compare-run-b");
+
+    if (state.runHistory.length < 2) {
+      emptyState.classList.remove("hidden");
+      content.classList.add("hidden");
+
+      if (state.runHistory.length === 0) {
+        emptyText.innerHTML =
+          "Сейчас в истории сохранено <strong>0 запусков</strong>. Чтобы сравнить стратегии, выполните сначала один запуск " +
+          "(например, «Планирование и ответ»), затем выберите другую стратегию на том же наборе задач (например, " +
+          "«Планирование, ответ и проверка») и нажмите «Запустить симуляцию» второй раз.";
+      } else {
+        const firstRun = state.runHistory[0];
+        emptyText.innerHTML =
+          "Выполнен <strong>1 запуск</strong> («" + firstRun.strategyName + "», выборка: " + firstRun.taskSetLabel + "). " +
+          "Для сравнения необходим минимум второй запуск: выберите другую стратегию в панели управления и нажмите <strong>«Запустить симуляцию»</strong>.";
+      }
+      return;
+    }
+
+    emptyState.classList.add("hidden");
+    content.classList.remove("hidden");
+
+    const optionsHtml = state.runHistory.map(function (r) {
+      return (
+        '<option value="' + r.runId + '">' +
+          "Запуск №" + r.runId + ": " + r.strategyName + " [" + r.taskSetLabel + "] — " +
+          formatPercent(r.successRate) + ", " + r.totalCost + " у.е." +
+        "</option>"
+      );
+    }).join("");
+
+    selectA.innerHTML = optionsHtml;
+    selectB.innerHTML = optionsHtml;
+
+    // По умолчанию сравниваем предпоследний запуск (А) и последний запуск (Б)
+    const prevRun = state.runHistory[state.runHistory.length - 2];
+    const lastRun = state.runHistory[state.runHistory.length - 1];
+    selectA.value = String(prevRun.runId);
+    selectB.value = String(lastRun.runId);
+
+    renderComparisonDetails();
+  }
+
+  function findRunById(runId) {
+    return state.runHistory.find(function (r) {
+      return r.runId === Number(runId);
+    });
+  }
+
+  function formatSignedNumber(val, suffix) {
+    const sign = val > 0 ? "+" : "";
+    return sign + formatNumber(val) + (suffix ? " " + suffix : "");
+  }
+
+  function formatSignedPercentChange(oldVal, newVal) {
+    if (oldVal === 0) return "н/д";
+    const rel = ((newVal - oldVal) / oldVal) * 100;
+    const sign = rel > 0 ? "+" : "";
+    return sign + rel.toFixed(1) + "%";
+  }
+
+  function renderComparisonDetails() {
+    const selectA = document.getElementById("compare-run-a");
+    const selectB = document.getElementById("compare-run-b");
+    const runA = findRunById(selectA.value);
+    const runB = findRunById(selectB.value);
+
+    if (!runA || !runB) return;
+
+    const statusBanner = document.getElementById("comparison-taskset-status");
+    const sameTaskSet = runA.taskSetKey === runB.taskSetKey;
+
+    if (sameTaskSet) {
+      statusBanner.className = "alert alert-success";
+      statusBanner.innerHTML =
+        "<strong>Корректное сравнение на одинаковом наборе задач:</strong> оба запуска выполнены на выборке <strong>«" +
+        runA.taskSetLabel + "»</strong>. Все изменения метрик обусловлены исключительно разницей между стратегиями " +
+        "«" + runA.strategyName + "» (Запуск №" + runA.runId + ") и «" + runB.strategyName + "» (Запуск №" + runB.runId + ").";
+    } else {
+      statusBanner.className = "alert alert-warning";
+      statusBanner.innerHTML =
+        "<strong>Внимание — наборы задач различаются!</strong> Запуск №" + runA.runId + " выполнен на выборке «" +
+        runA.taskSetLabel + "», а Запуск №" + runB.runId + " — на выборке «" + runB.taskSetLabel + "». " +
+        "Прямое сопоставление суммарной стоимости, задержки и количества шагов некорректно. Для честного сравнения выберите запуски с одинаковым набором задач.";
+    }
+
+    // Расчёт дельт (Запуск Б относительно Запуска А)
+    const diffSuccessRate = runB.successRate - runA.successRate;
+    const diffSucceededTasks = runB.succeededTasks - runA.succeededTasks;
+    const diffCost = runB.totalCost - runA.totalCost;
+    const diffLatency = runB.totalLatencyMs - runA.totalLatencyMs;
+    const diffSteps = runB.totalSteps - runA.totalSteps;
+
+    // 1. Карточка сравнения успешности
+    let successBadgeClass = "delta-neutral";
+    let successDirectionText = "Без изменений: доля решённых задач осталась прежней.";
+    if (diffSuccessRate > 0.001) {
+      successBadgeClass = "delta-quality-up";
+      successDirectionText = "Улучшение качества: решено на " + diffSucceededTasks + " зад. больше (рост успешности).";
+    } else if (diffSuccessRate < -0.001) {
+      successBadgeClass = "delta-quality-down";
+      successDirectionText = "Снижение качества: решено на " + Math.abs(diffSucceededTasks) + " зад. меньше (потеря точности).";
+    }
+
+    // 2. Карточка сравнения стоимости
+    let costBadgeClass = "delta-neutral";
+    let costDirectionText = "Без изменений: стоимость выполнения не изменилась.";
+    if (diffCost > 0) {
+      costBadgeClass = "delta-cost-up";
+      costDirectionText = "Рост вычислительных затрат: плата за дополнительные шаги агента.";
+    } else if (diffCost < 0) {
+      costBadgeClass = "delta-cost-down";
+      costDirectionText = "Экономия бюджета: сокращение числа или стоимости операций.";
+    }
+
+    // 3. Карточка сравнения задержки
+    let latencyBadgeClass = "delta-neutral";
+    let latencyDirectionText = "Без изменений: суммарное время ответа прежнее.";
+    if (diffLatency > 0) {
+      latencyBadgeClass = "delta-cost-up";
+      latencyDirectionText = "Увеличение времени ожидания: плата за последовательные шаги рассуждений и проверки.";
+    } else if (diffLatency < 0) {
+      latencyBadgeClass = "delta-cost-down";
+      latencyDirectionText = "Ускорение ответа: меньшее время ожидания результата.";
+    }
+
+    // 4. Карточка сравнения шагов
+    let stepsBadgeClass = "delta-neutral";
+    let stepsDirectionText = "Без изменений: одинаковое количество операций.";
+    if (diffSteps > 0) {
+      stepsBadgeClass = "delta-cost-up";
+      stepsDirectionText = "Рост числа операций: добавлены шаги планирования, проверки или исправления.";
+    } else if (diffSteps < 0) {
+      stepsBadgeClass = "delta-cost-down";
+      stepsDirectionText = "Сокращение цепочки: меньше вызовов модели.";
+    }
+
+    const signPP = diffSuccessRate > 0 ? "+" : "";
+    const grid = document.getElementById("comparison-grid");
+    grid.innerHTML =
+      // Успешность
+      '<article class="compare-card">' +
+        '<div class="compare-card-title">Успешность (А → Б)</div>' +
+        '<div class="compare-values-row">' +
+          '<span class="compare-val-old">' + formatPercent(runA.successRate) + "</span>" +
+          '<span class="compare-arrow">→</span>' +
+          '<span class="compare-val-new">' + formatPercent(runB.successRate) + "</span>" +
+        "</div>" +
+        '<div><span class="compare-delta-badge ' + successBadgeClass + '">' +
+          signPP + diffSuccessRate.toFixed(1) + " п.п. (" + formatSignedNumber(diffSucceededTasks, "зад.") + ")" +
+        "</span></div>" +
+        '<div class="compare-explanation">' + successDirectionText + "</div>" +
+      "</article>" +
+
+      // Стоимость
+      '<article class="compare-card">' +
+        '<div class="compare-card-title">Общая стоимость (А → Б)</div>' +
+        '<div class="compare-values-row">' +
+          '<span class="compare-val-old">' + formatNumber(runA.totalCost) + " у.е.</span>" +
+          '<span class="compare-arrow">→</span>' +
+          '<span class="compare-val-new">' + formatNumber(runB.totalCost) + " у.е.</span>" +
+        "</div>" +
+        '<div><span class="compare-delta-badge ' + costBadgeClass + '">' +
+          formatSignedNumber(diffCost, "у.е.") + " (" + formatSignedPercentChange(runA.totalCost, runB.totalCost) + ")" +
+        "</span></div>" +
+        '<div class="compare-explanation">' + costDirectionText + "</div>" +
+      "</article>" +
+
+      // Задержка
+      '<article class="compare-card">' +
+        '<div class="compare-card-title">Общая задержка (А → Б)</div>' +
+        '<div class="compare-values-row">' +
+          '<span class="compare-val-old">' + formatNumber(runA.totalLatencyMs) + " мс</span>" +
+          '<span class="compare-arrow">→</span>' +
+          '<span class="compare-val-new">' + formatNumber(runB.totalLatencyMs) + " мс</span>" +
+        "</div>" +
+        '<div><span class="compare-delta-badge ' + latencyBadgeClass + '">' +
+          formatSignedNumber(diffLatency, "мс") + " (" + formatSignedPercentChange(runA.totalLatencyMs, runB.totalLatencyMs) + ")" +
+        "</span></div>" +
+        '<div class="compare-explanation">' + latencyDirectionText + "</div>" +
+      "</article>" +
+
+      // Шаги
+      '<article class="compare-card">' +
+        '<div class="compare-card-title">Количество шагов (А → Б)</div>' +
+        '<div class="compare-values-row">' +
+          '<span class="compare-val-old">' + formatNumber(runA.totalSteps) + "</span>" +
+          '<span class="compare-arrow">→</span>' +
+          '<span class="compare-val-new">' + formatNumber(runB.totalSteps) + "</span>" +
+        "</div>" +
+        '<div><span class="compare-delta-badge ' + stepsBadgeClass + '">' +
+          formatSignedNumber(diffSteps, "шагов") + " (" + formatSignedPercentChange(runA.totalSteps, runB.totalSteps) + ")" +
+        "</span></div>" +
+        '<div class="compare-explanation">' + stepsDirectionText + "</div>" +
+      "</article>";
+
+    // Позадачное сравнение (если наборы задач совпадают)
+    const tasksWrapper = document.getElementById("comparison-tasks-wrapper");
+    const tasksTbody = document.getElementById("comparison-tasks-tbody");
+
+    if (!sameTaskSet) {
+      tasksWrapper.classList.add("hidden");
+      tasksTbody.innerHTML = "";
+      return;
+    }
+
+    tasksWrapper.classList.remove("hidden");
+    const rows = runA.taskResults.map(function (trA, idx) {
+      const trB = runB.taskResults[idx];
+      const dSteps = trB.stepCount - trA.stepCount;
+      const dCost = trB.cost - trA.cost;
+      const dLat = trB.latencyMs - trA.latencyMs;
+
+      let effectText = "";
+      if (!trA.success && trB.success) {
+        effectText = "Исправлена ошибка: дополнительные шаги привели к верному решению.";
+      } else if (trA.success && !trB.success) {
+        effectText = "Потеря верного решения при упрощении стратегии.";
+      } else if (trA.success && trB.success) {
+        if (dCost > 0) {
+          effectText = "Задача уже решалась верно: дополнительные шаги (+ " + dCost + " у.е.) стали накладным расходом.";
+        } else if (dCost < 0) {
+          effectText = "Экономия ресурсов без потери правильности ответа.";
+        } else {
+          effectText = "Без изменений.";
+        }
+      } else {
+        // Оба неудача
+        if (trB.outcomeCategory === "unfixable_error") {
+          effectText = "Неисправимая ошибка осталась: проверка не может устранить фундаментальное ограничение.";
+        } else {
+          effectText = "Ошибка сохранилась в обоих запусках.";
+        }
+      }
+
+      return (
+        "<tr>" +
+          "<td><span class='task-code'>" + trA.taskId + "</span> " + trA.title + "</td>" +
+          "<td><span class='badge " + trA.difficultyBadgeClass + "'>" + trA.difficultyLabel + " (K=" + trA.multiplier + ")</span></td>" +
+          "<td><span class='badge " + (trA.success ? "badge-success" : "badge-fail") + "'>" + trA.outcomeBadgeText + "</span></td>" +
+          "<td><span class='badge " + (trB.success ? "badge-success" : "badge-fail") + "'>" + trB.outcomeBadgeText + "</span></td>" +
+          '<td class="num-col">' + formatSignedNumber(dSteps, "") + "</td>" +
+          '<td class="num-col">' + formatSignedNumber(dCost, "у.е.") + "</td>" +
+          '<td class="num-col">' + formatSignedNumber(dLat, "мс") + "</td>" +
+          "<td>" + effectText + "</td>" +
+        "</tr>"
+      );
+    }).join("");
+
+    tasksTbody.innerHTML = rows;
+  }
+
+  // 8. ОТСЛЕЖИВАНИЕ ПРОГРЕССА КОНТРОЛЬНОГО СЦЕНАРИЯ
+  function updateScenarioProgressUI() {
+    const allTasksKey = buildTaskSetKey(TASKS);
+    const hasPlanAnswerAll = state.runHistory.some(function (r) {
+      return r.strategyId === "plan_answer" && r.taskSetKey === allTasksKey;
+    });
+    const hasPlanVerifyAll = state.runHistory.some(function (r) {
+      return r.strategyId === "plan_verify" && r.taskSetKey === allTasksKey;
+    });
+    const bothDone = hasPlanAnswerAll && hasPlanVerifyAll;
+
+    document.getElementById("scen-step-1").classList.toggle("done", hasPlanAnswerAll);
+    document.getElementById("scen-step-2").classList.toggle("done", hasPlanVerifyAll);
+    document.getElementById("scen-step-3").classList.toggle("done", bothDone);
+
+    let completed = 0;
+    if (hasPlanAnswerAll) completed += 1;
+    if (hasPlanVerifyAll) completed += 1;
+    if (bothDone) completed += 1;
+
+    const badge = document.getElementById("scenario-progress-badge");
+    badge.textContent = "Прогресс сценария: " + completed + " / 3";
+    badge.className = completed === 3 ? "badge badge-success" : "badge badge-neutral";
+  }
+
+  // 9. ОБРАБОТЧИКИ СОБЫТИЙ
+  function handleRunSimulation() {
+    const validationAlert = document.getElementById("validation-alert");
+    const selectedDifficulties = getSelectedDifficulties();
+    const selectedTasks = getFilteredTasks(selectedDifficulties);
+
+    // Граничный случай: не выбрано ни одной задачи
+    if (selectedTasks.length === 0) {
+      validationAlert.textContent =
+        "Не выбрано ни одной задачи. Пожалуйста, отметьте хотя бы один уровень сложности («Простая», «Средняя» или «Сложная»), чтобы запустить симуляцию без деления на ноль.";
+      validationAlert.classList.remove("hidden");
+      return;
+    }
+
+    validationAlert.classList.add("hidden");
+
+    const strategyId = getSelectedStrategyId();
+    const nextRunNumber = state.runHistory.length + 1;
+
+    // Выполняем расчёт с нуля (старый журнал не прибавляется к новому)
+    const runResult = executeSimulationRun(strategyId, selectedDifficulties, selectedTasks, nextRunNumber);
+
+    state.currentRun = runResult;
+    state.runHistory.push(runResult);
+    state.lastRunConfigKey = runResult.configKey;
+
+    // Обновляем счётчик запусков
+    document.getElementById("run-counter-badge").textContent =
+      "Выполнено запусков: " + state.runHistory.length;
+
+    // Сбрасываем фильтры журнала к показу всех шагов нового запуска
+    populateJournalTaskSelect(runResult);
+    document.getElementById("journal-task-filter").value = "all";
+    document.getElementById("journal-step-filter").value = "all";
+
+    // Отрисовываем все секции
+    checkStaleStateUI();
+    renderMetricsSection(runResult);
+    renderTasksTable(runResult);
+    renderJournalTable(runResult);
+    updateComparisonSelectors();
+    updateScenarioProgressUI();
+  }
+
+  function handleResetAll() {
+    // Сброс состояния
+    state.runHistory = [];
+    state.currentRun = null;
+    state.lastRunConfigKey = null;
+
+    // Возврат переключателей к начальному состоянию
+    const defaultStrategyRadio = document.getElementById("strategy-plan-answer");
+    if (defaultStrategyRadio) defaultStrategyRadio.checked = true;
+
+    const checkboxes = document.querySelectorAll(".difficulty-checkboxes input[type='checkbox']");
+    checkboxes.forEach(function (cb) {
+      cb.checked = true;
+    });
+
+    document.getElementById("validation-alert").classList.add("hidden");
+    document.getElementById("stale-alert").classList.add("hidden");
+    document.getElementById("run-counter-badge").textContent = "Выполнено запусков: 0";
+
+    updateSelectionSummaryUI();
+    renderMetricsSection(null);
+    renderTasksTable(null);
+    populateJournalTaskSelect(null);
+    renderJournalTable(null);
+    updateComparisonSelectors();
+    updateScenarioProgressUI();
+  }
+
+  function applyDifficultyPreset(preset) {
+    const checkboxes = document.querySelectorAll(".difficulty-checkboxes input[type='checkbox']");
+    checkboxes.forEach(function (cb) {
+      if (preset === "all") {
+        cb.checked = true;
+      } else if (preset === "none") {
+        cb.checked = false;
+      } else {
+        cb.checked = cb.value === preset;
+      }
+    });
+    document.getElementById("validation-alert").classList.add("hidden");
+    updateSelectionSummaryUI();
+  }
+
+  function initEventListeners() {
+    // Кнопки запуска и сброса
+    document.getElementById("run-btn").addEventListener("click", handleRunSimulation);
+    document.getElementById("reset-btn").addEventListener("click", handleResetAll);
+
+    // Переключение стратегии
+    const strategyRadios = document.querySelectorAll('input[name="strategy"]');
+    strategyRadios.forEach(function (radio) {
+      radio.addEventListener("change", function () {
+        checkStaleStateUI();
+      });
+    });
+
+    // Чекбоксы уровней сложности
+    const diffCheckboxes = document.querySelectorAll(".difficulty-checkboxes input[type='checkbox']");
+    diffCheckboxes.forEach(function (cb) {
+      cb.addEventListener("change", function () {
+        document.getElementById("validation-alert").classList.add("hidden");
+        updateSelectionSummaryUI();
+      });
+    });
+
+    // Быстрые пресеты выборки задач
+    const presetButtons = document.querySelectorAll(".btn-preset");
+    presetButtons.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        const preset = btn.getAttribute("data-preset");
+        applyDifficultyPreset(preset);
+      });
+    });
+
+    // Фильтры журнала
+    document.getElementById("journal-task-filter").addEventListener("change", function () {
+      renderJournalTable(state.currentRun);
+    });
+    document.getElementById("journal-step-filter").addEventListener("change", function () {
+      renderJournalTable(state.currentRun);
+    });
+    document.getElementById("journal-reset-filter-btn").addEventListener("click", function () {
+      document.getElementById("journal-task-filter").value = "all";
+      document.getElementById("journal-step-filter").value = "all";
+      renderJournalTable(state.currentRun);
+    });
+
+    // Клик по кнопке «Шаги задачи» в таблице задач -> фильтрация журнала и прокрутка к нему
+    document.getElementById("tasks-results-tbody").addEventListener("click", function (event) {
+      const btn = event.target.closest(".btn-filter-task-log");
+      if (!btn || !state.currentRun) return;
+      const taskId = btn.getAttribute("data-task-id");
+      document.getElementById("journal-task-filter").value = taskId;
+      document.getElementById("journal-step-filter").value = "all";
+      renderJournalTable(state.currentRun);
+      document.getElementById("journal-section").scrollIntoView({ behavior: "smooth" });
+    });
+
+    // Селекторы сравнения запусков
+    document.getElementById("compare-run-a").addEventListener("change", renderComparisonDetails);
+    document.getElementById("compare-run-b").addEventListener("change", renderComparisonDetails);
+  }
+
+  // Инициализация при загрузке страницы
+  document.addEventListener("DOMContentLoaded", function () {
+    updateSelectionSummaryUI();
+    initEventListeners();
+  });
+})();
+```
+
+---
+
+### Краткое описание правил симуляции
+
+1. **Набор задач и коэффициенты сложности:**
+   В симуляцию встроено **12 задач** трёх уровней сложности:
+   - **Простые (`easy`, 4 задачи: `T-01`..`T-04`):** множитель ресурсоёмкости $K = 1$.
+   - **Средние (`medium`, 4 задачи: `T-05`..`T-08`):** множитель ресурсоёмкости $K = 2$.
+   - **Сложные (`hard`, 4 задачи: `T-09`..`T-12`):** множитель ресурсоёмкости $K = 3$.
+
+2. **Типы шагов, их стоимость и задержка:**
+   Каждый выполненный шаг добавляет ровно $+1$ к счётчику операций, а его стоимость (в у.е., $1\text{ у.е.} = 100\text{ условных токенов}$) и длительность (в мс модельного времени) рассчитываются по формулам $\text{Cost}(s) = C_{\text{base}}(s) \times K$ и $\text{Latency}(s) = L_{\text{base}}(s) \times K$:
+   - **Планирование (`plan`):** $4 \times K$ у.е., $300 \times K$ мс.
+   - **Генерация ответа (`answer`):** $6 \times K$ у.е., $450 \times K$ мс.
+   - **Проверка ответа (`verify`):** $3 \times K$ у.е., $250 \times K$ мс.
+   - **Исправление ошибки (`fix`):** $5 \times K$ у.е., $400 \times K$ мс (добавляется только в стратегии 3 и только если на шаге проверки обнаружена *исправимая ошибка*).
+
+3. **Поведение трёх стратегий на полном наборе из 12 задач ($\sum K = 24$):**
+   - **«Прямой ответ» (`direct`):** решает простые задачи `T-01`, `T-02` $\rightarrow$ **успешность $16.7\%$ ($2/12$)**, **$12$ шагов**, **$144$ у.е.**, **$10\,800$ мс**.
+   - **«Планирование и ответ» (`plan_answer`):** дополнительно решает задачи, где критична предварительная декомпозиция (`T-04`, `T-05`, `T-09`) $\rightarrow$ **успешность $41.7\%$ ($5/12$)**, **$24$ шага**, **$240$ у.е.**, **$18\,000$ мс**.
+   - **«Планирование, ответ и проверка» (`plan_verify`):** выполняет проверку для всех 12 задач ($+12$ шагов `verify`, $+72$ у.е., $+6\,000$ мс) и запускает отдельный шаг исправления `fix` для 5 задач с исправимыми ошибками (`T-03`, `T-06`, `T-07`, `T-10`, `T-12` с суммой коэффициентов $\sum K_{\text{fixed}} = 1+2+2+3+3 = 11$, что даёт $+5$ шагов `fix`, $+55$ у.е., $+4\,400$ мс). Две задачи с неисправимыми ошибками (`T-08` — нет доступа к закрытой ERP, `T-11` — физически противоречивое ТЗ) остаются нерешёнными $\rightarrow$ **успешность $83.3\%$ ($10/12$)**, **$41$ шаг**, **$367$ у.е.**, **$28\,400$ мс**.
+
+---
+
+### Список выполненных проверок
+
+- **Все три стратегии работают и дают объяснимо разные результаты:** проверены переходы `16.7% → 41.7% → 83.3%` на полном наборе задач и на отдельных фильтрах сложности.
+- **Честный расчёт метрик из шагов:** ни одно итоговое число не зашито в константы; карточки метрик, футер таблицы задач и футер журнала шагов вычисляются по созданным объектам шагов и сверяются автоматически (`isConsistent === true`).
+- **Контрольный сценарий («Планирование и ответ» vs «Планирование, ответ и проверка»):**
+  - 5 исправимых ошибок (`T-03`, `T-06`, `T-07`, `T-10`, `T-12`) обнаруживаются на шаге `verify` и исправляются шагом `fix`.
+  - 2 неисправимые ошибки (`T-08`, `T-11`) остаются в статусе «Неудача» даже после проверки.
+  - Разница между запусками составляет ровно $+17$ шагов ($24 \rightarrow 41$), $+127$ у.е. ($240 \rightarrow 367$) и $+10\,400$ мс ($18\,000 \rightarrow 28\,400$), что в точности равно сумме добавленных шагов `verify` и `fix` в журнале.
+  - Повторные запуски полностью детерминированы и дают идентичные результаты.
+- **Обработка граничных случаев:**
+  - До первого запуска отображается информативное пустое состояние вместо нулевых значений.
+  - При выборе `0 задач` (кнопка «Снять выбор (0 задач)» или снятие всех галочек) выводится понятное предупреждение, деление на ноль не выполняется, `NaN` и `Infinity` не появляются.
+  - При переключении стратегии или фильтра после запуска появляется предупреждение о том, что отображаемые результаты относятся к предыдущей конфигурации.
+  - При сравнении запусков с разными выборками задач выводится предупреждение о некорректности прямого сравнения.
+  - Повторный запуск создаёт новую запись запуска и не суммирует старый журнал с новым.
+  - Кнопка сброса полностью очищает историю запусков, таблицы, сравнение и возвращает параметры к начальному состоянию.

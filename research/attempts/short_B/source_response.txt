@@ -1,0 +1,542 @@
+Это полноценное одностраничное веб-приложение (SPA), написанное на HTML, CSS (с использованием Tailwind CSS) и чистом JavaScript. Оно работает прямо в браузере без необходимости настраивать сервер.
+
+Сайт выполнен в современном «кибер-образовательном» темном стиле. Я также добавил **выбор сложности задачи**, так как эффективность стратегии агента напрямую зависит от того, насколько трудна задача, и **симулятор логов агента**, чтобы наглядно показать, откуда берутся шаги и задержка.
+
+### Как запустить:
+1. Скопируйте код ниже.
+2. Сохраните его на компьютере в файл с именем `index.html`.
+3. Откройте этот файл в любом браузере (Chrome, Safari, Firefox, Edge).
+
+```html
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Лаборатория AI-Агентов: Оценка и Стратегии</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['Fira Code', 'monospace'],
+                    },
+                    colors: {
+                        gray: {
+                            850: '#1f2937',
+                            900: '#111827',
+                            950: '#030712',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .metric-bar { transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.4s; }
+        .log-entry { animation: fadeIn 0.3s ease-in-out forwards; opacity: 0; transform: translateY(5px); }
+        @keyframes fadeIn { to { opacity: 1; transform: translateY(0); } }
+        
+        /* Кастомный скроллбар для терминала */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #111827; }
+        ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+    </style>
+</head>
+<body class="bg-gray-950 text-gray-100 font-sans min-h-screen selection:bg-indigo-500 selection:text-white">
+
+    <!-- Шапка -->
+    <header class="border-b border-gray-800 bg-gray-900/50 backdrop-blur sticky top-0 z-10">
+        <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
+            <div class="flex items-center space-x-3">
+                <div class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center font-bold text-xl">AI</div>
+                <h1 class="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-cyan-400">
+                    SimuAgent: Оценка AI-агентов
+                </h1>
+            </div>
+            <div class="text-sm text-gray-400 hidden sm:block">Интерактивный образовательный симулятор</div>
+        </div>
+    </header>
+
+    <!-- Основной контент -->
+    <main class="max-w-7xl mx-auto px-4 py-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
+        
+        <!-- Левая колонка: Управление (5 колонок) -->
+        <div class="lg:col-span-5 space-y-6">
+            
+            <!-- Шаг 1: Выбор задачи -->
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-lg">
+                <h2 class="text-sm font-semibold text-indigo-400 uppercase tracking-wider mb-3">1. Выберите сложность задачи</h2>
+                <p class="text-xs text-gray-400 mb-4">Эффективность стратегии зависит от того, какую задачу решает агент.</p>
+                
+                <div class="grid grid-cols-3 gap-2" id="task-selector">
+                    <button onclick="setTask('easy')" class="task-btn active py-2 px-3 rounded-lg text-sm font-medium border border-indigo-500 bg-indigo-500/20 text-white transition">
+                        Простая
+                        <span class="block text-[10px] text-gray-300 font-normal mt-1">Суммаризация</span>
+                    </button>
+                    <button onclick="setTask('medium')" class="task-btn py-2 px-3 rounded-lg text-sm font-medium border border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700 transition">
+                        Средняя
+                        <span class="block text-[10px] text-gray-400 font-normal mt-1">Анализ данных</span>
+                    </button>
+                    <button onclick="setTask('hard')" class="task-btn py-2 px-3 rounded-lg text-sm font-medium border border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700 transition">
+                        Сложная
+                        <span class="block text-[10px] text-gray-400 font-normal mt-1">Написание кода</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Шаг 2: Выбор стратегии -->
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 shadow-lg">
+                <h2 class="text-sm font-semibold text-indigo-400 uppercase tracking-wider mb-3">2. Архитектура (Стратегия) агента</h2>
+                <div class="space-y-3" id="strategy-selector">
+                    <!-- Генерируется через JS -->
+                </div>
+            </div>
+
+            <!-- Теоретическая справка -->
+            <div class="bg-indigo-950/30 border border-indigo-900/50 rounded-xl p-5">
+                <h3 class="font-semibold text-indigo-300 mb-2 flex items-center">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    Трилемма AI-агентов
+                </h3>
+                <p class="text-sm text-gray-300 leading-relaxed">
+                    В разработке агентов невозможно получить всё сразу. Улучшая <b>Успешность</b> через сложные рассуждения и проверку ошибок, вы неизбежно увеличиваете <b>Стоимость</b> (расход токенов) и <b>Задержку</b> (время ожидания пользователя). Искусство инженера — найти баланс под конкретную задачу.
+                </p>
+            </div>
+        </div>
+
+        <!-- Правая колонка: Метрики и Симуляция (7 колонок) -->
+        <div class="lg:col-span-7 space-y-6">
+            
+            <!-- Панель метрик -->
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 shadow-lg">
+                <h2 class="text-lg font-bold mb-6 flex justify-between items-center">
+                    <span>Метрики производительности</span>
+                    <span id="badge-verdict" class="text-xs px-3 py-1 rounded-full font-medium bg-gray-800 text-gray-300">Оценка...</span>
+                </h2>
+
+                <div class="space-y-5">
+                    <!-- Метрика 1: Успешность -->
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="font-medium text-gray-200 flex items-center">
+                                🎯 Успешность (Success Rate)
+                                <span class="ml-2 text-xs text-gray-500">Точность решения</span>
+                            </span>
+                            <span id="val-success" class="font-mono font-bold">0%</span>
+                        </div>
+                        <div class="w-full bg-gray-800 rounded-full h-3 overflow-hidden">
+                            <div id="bar-success" class="metric-bar bg-emerald-500 h-3 rounded-full" style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <!-- Метрика 2: Стоимость -->
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="font-medium text-gray-200 flex items-center">
+                                💰 Стоимость (Cost)
+                                <span class="ml-2 text-xs text-gray-500">Расход токенов API</span>
+                            </span>
+                            <span id="val-cost" class="font-mono font-bold">$0.00</span>
+                        </div>
+                        <div class="w-full bg-gray-800 rounded-full h-3 overflow-hidden">
+                            <div id="bar-cost" class="metric-bar bg-amber-500 h-3 rounded-full" style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <!-- Метрика 3: Задержка -->
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="font-medium text-gray-200 flex items-center">
+                                ⚡ Задержка (Latency)
+                                <span class="ml-2 text-xs text-gray-500">Время до финального ответа</span>
+                            </span>
+                            <span id="val-latency" class="font-mono font-bold">0 сек</span>
+                        </div>
+                        <div class="w-full bg-gray-800 rounded-full h-3 overflow-hidden">
+                            <div id="bar-latency" class="metric-bar bg-purple-500 h-3 rounded-full" style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <!-- Метрика 4: Шаги -->
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="font-medium text-gray-200 flex items-center">
+                                👣 Количество шагов (Steps)
+                                <span class="ml-2 text-xs text-gray-500">Вызовы LLM и инструментов</span>
+                            </span>
+                            <span id="val-steps" class="font-mono font-bold">0</span>
+                        </div>
+                        <div class="w-full bg-gray-800 rounded-full h-3 overflow-hidden">
+                            <div id="bar-steps" class="metric-bar bg-cyan-500 h-3 rounded-full" style="width: 0%"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Объяснение результатов -->
+                <div class="mt-6 pt-5 border-t border-gray-800">
+                    <h4 class="text-xs font-semibold text-gray-400 uppercase mb-2">Анализ выбора:</h4>
+                    <p id="analysis-text" class="text-sm text-gray-300 leading-relaxed">Выберите стратегию...</p>
+                </div>
+            </div>
+
+            <!-- Терминал: Симуляция работы агента -->
+            <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden shadow-lg flex flex-col h-80">
+                <div class="bg-gray-850 px-4 py-2 border-b border-gray-800 flex justify-between items-center">
+                    <div class="flex items-center space-x-2">
+                        <div class="w-3 h-3 rounded-full bg-red-500/80"></div>
+                        <div class="w-3 h-3 rounded-full bg-yellow-500/80"></div>
+                        <div class="w-3 h-3 rounded-full bg-green-500/80"></div>
+                        <span class="text-xs font-mono text-gray-400 ml-2">agent_execution.log</span>
+                    </div>
+                    <button onclick="replaySimulation()" class="text-xs text-indigo-400 hover:text-indigo-300 flex items-center">
+                        <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                        Повторить
+                    </button>
+                </div>
+                <div id="terminal-logs" class="p-4 font-mono text-xs space-y-2 overflow-y-auto flex-1 bg-gray-950/50">
+                    <!-- Логи генерируются через JS -->
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- Подвал с глоссарием -->
+    <footer class="max-w-7xl mx-auto px-4 py-8 border-t border-gray-800 mt-8">
+        <h3 class="text-sm font-bold text-gray-400 uppercase mb-4">Краткий словарь терминов</h3>
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs text-gray-400">
+            <div class="bg-gray-900 p-3 rounded-lg border border-gray-800">
+                <strong class="text-white block mb-1">Токены (Стоимость)</strong>
+                Единицы текста (части слов), которые обрабатывает LLM. Чем больше агент "думает" вслух и читает документацию, тем больше токенов тратится.
+            </div>
+            <div class="bg-gray-900 p-3 rounded-lg border border-gray-800">
+                <strong class="text-white block mb-1">Инструменты (Tools)</strong>
+                Внешние функции, доступные агенту: поиск в Google, калькулятор, выполнение Python-кода, чтение баз данных.
+            </div>
+            <div class="bg-gray-900 p-3 rounded-lg border border-gray-800">
+                <strong class="text-white block mb-1">Галлюцинации</strong>
+                Ситуации, когда ИИ уверенно выдумывает факты или пишет нерабочий код. Сложные стратегии призваны бороться с этим.
+            </div>
+            <div class="bg-gray-900 p-3 rounded-lg border border-gray-800">
+                <strong class="text-white block mb-1">Промптинг</strong>
+                Способ задания инструкций для ИИ. Стратегии агентов — это по сути продвинутые циклы автоматического промптинга.
+            </div>
+        </div>
+    </footer>
+
+    <!-- Логика приложения -->
+    <script>
+        // База данных стратегий и метрик
+        const strategies = {
+            zeroshot: {
+                name: "Zero-Shot (Прямой ответ)",
+                desc: "Модель сразу генерирует ответ без предварительных рассуждений и использования инструментов.",
+                metrics: {
+                    easy:   { success: 90, cost: 5,  latency: 10, steps: 1, realCost: "$0.001", realTime: "0.8 сек", realSteps: "1 шаг" },
+                    medium: { success: 50, cost: 5,  latency: 12, steps: 1, realCost: "$0.002", realTime: "1.2 сек", realSteps: "1 шаг" },
+                    hard:   { success: 15, cost: 8,  latency: 15, steps: 1, realCost: "$0.005", realTime: "2.0 сек", realSteps: "1 шаг" }
+                },
+                analysis: {
+                    easy: "Идеальный выбор! Для простой задачи не нужны сложные размышления. Быстро, дешево и сердито.",
+                    medium: "Рискованно. Без обдумывания модель часто упускает детали или делает арифметические ошибки.",
+                    hard: "Провал. Написать сложный код с первой попытки без проверки практически невозможно. Модель галлюцинирует."
+                },
+                verdict: { easy: ["Оптимально", "bg-emerald-500/20 text-emerald-400 border-emerald-500/50"], medium: ["Ненадежно", "bg-amber-500/20 text-amber-400 border-amber-500/50"], hard: ["Непригодно", "bg-red-500/20 text-red-400 border-red-500/50"] },
+                logs: [
+                    { type: "input", text: "Получена задача от пользователя." },
+                    { type: "llm", text: "Генерация прямого ответа (1 вызов LLM)..." },
+                    { type: "output", text: "Ответ готов и отправлен пользователю." }
+                ]
+            },
+            cot: {
+                name: "Chain-of-Thought (Цепочка мыслей)",
+                desc: "Агент обязан сначала расписать план и логику решения шаг за шагом, прежде чем дать финальный ответ.",
+                metrics: {
+                    easy:   { success: 95, cost: 20, latency: 25, steps: 2, realCost: "$0.005", realTime: "2.5 сек", realSteps: "2 шага" },
+                    medium: { success: 75, cost: 25, latency: 30, steps: 3, realCost: "$0.012", realTime: "4.0 сек", realSteps: "3 шага" },
+                    hard:   { success: 40, cost: 30, latency: 40, steps: 4, realCost: "$0.025", realTime: "6.5 сек", realSteps: "4 шага" }
+                },
+                analysis: {
+                    easy: "Небольшой оверкилл (избыточность). Качество чуть выше, но вы платите за генерацию лишних слов рассуждений.",
+                    medium: "Хороший баланс! Рассуждения вслух помогают модели не потерять контекст и правильно проанализировать данные.",
+                    hard: "Недостаточно. Модель хорошо спланировала архитектуру кода, но не может запустить его, чтобы проверить на баги."
+                },
+                verdict: { easy: ["Избыточно", "bg-blue-500/20 text-blue-400 border-blue-500/50"], medium: ["Оптимально", "bg-emerald-500/20 text-emerald-400 border-emerald-500/50"], hard: ["Слабо", "bg-amber-500/20 text-amber-400 border-amber-500/50"] },
+                logs: [
+                    { type: "input", text: "Получена задача. Инициализация CoT промпта." },
+                    { type: "think", text: "Мысль 1: Разбиваю задачу на подзадачи..." },
+                    { type: "think", text: "Мысль 2: Проверяю логические связи и граничные условия..." },
+                    { type: "llm", text: "Синтез финального ответа на основе рассуждений." },
+                    { type: "output", text: "Ответ готов." }
+                ]
+            },
+            react: {
+                name: "ReAct (Рассуждение + Действие)",
+                desc: "Цикл: Мысль -> Использование инструмента (Поиск/Код) -> Наблюдение за результатом -> Новая мысль.",
+                metrics: {
+                    easy:   { success: 96, cost: 40, latency: 50, steps: 4, realCost: "$0.020", realTime: "6.0 сек", realSteps: "4 шага" },
+                    medium: { success: 88, cost: 50, latency: 60, steps: 6, realCost: "$0.045", realTime: "11 сек", realSteps: "6 шагов" },
+                    hard:   { success: 70, cost: 65, latency: 75, steps: 8, realCost: "$0.080", realTime: "18 сек", realSteps: "8 шагов" }
+                },
+                analysis: {
+                    easy: "Стрельба из пушки по воробьям. Агент зачем-то полез в поиск или калькулятор для элементарной задачи.",
+                    medium: "Отличный результат! Агент сам написал скрипт для анализа данных, запустил его и выдал точный ответ.",
+                    hard: "Неплохо. Агент может искать документацию и запускать код. Но если он зайдет в тупик, у него нет механизма глубокой саморефлексии."
+                },
+                verdict: { easy: ["Дорого", "bg-amber-500/20 text-amber-400 border-amber-500/50"], medium: ["Отлично", "bg-emerald-500/20 text-emerald-400 border-emerald-500/50"], hard: ["Рабочий вариант", "bg-blue-500/20 text-blue-400 border-blue-500/50"] },
+                logs: [
+                    { type: "input", text: "Старт цикла ReAct." },
+                    { type: "think", text: "Мысль: Мне нужно получить актуальные данные / проверить гипотезу." },
+                    { type: "action", text: "Действие: Вызов инструмента [Python_Interpreter / Web_Search]..." },
+                    { type: "obs", text: "Наблюдение: Получен результат от инструмента (200 OK)." },
+                    { type: "think", text: "Мысль: Данные получены, теперь нужно их обработать." },
+                    { type: "action", text: "Действие: Вызов инструмента [Data_Validator]..." },
+                    { type: "obs", text: "Наблюдение: Валидация успешна." },
+                    { type: "output", text: "Формирование финального ответа." }
+                ]
+            },
+            reflexion: {
+                name: "Reflexion (Самокоррекция)",
+                desc: "Агент генерирует решение, затем включает режим «Критика», ищет ошибки в своей работе и переписывает ответ.",
+                metrics: {
+                    easy:   { success: 98, cost: 65, latency: 70, steps: 6, realCost: "$0.050", realTime: "10 сек", realSteps: "6 шагов" },
+                    medium: { success: 92, cost: 75, latency: 80, steps: 9, realCost: "$0.090", realTime: "20 сек", realSteps: "9 шагов" },
+                    hard:   { success: 88, cost: 85, latency: 85, steps: 12, realCost: "$0.150", realTime: "35 сек", realSteps: "12 шагов" }
+                },
+                analysis: {
+                    easy: "Огромная трата времени и денег. Агент трижды перепроверяет простейший текст, который был правильным с первого раза.",
+                    medium: "Высочайшее качество, но пользователь начинает скучать, глядя на индикатор загрузки.",
+                    hard: "То, что нужно для кода! Агент написал код, запустил тесты, увидел ошибку (Traceback), сам понял причину, исправил код и снова проверил."
+                },
+                verdict: { easy: ["Бессмысленно", "bg-red-500/20 text-red-400 border-red-500/50"], medium: ["Дорого, но точно", "bg-blue-500/20 text-blue-400 border-blue-500/50"], hard: ["Оптимально", "bg-emerald-500/20 text-emerald-400 border-emerald-500/50"] },
+                logs: [
+                    { type: "input", text: "Задача принята. Генерация черновика (Draft v1)..." },
+                    { type: "action", text: "Тестирование черновика в песочнице..." },
+                    { type: "error", text: "Ошибка выполнения! Найдены баги / неточности." },
+                    { type: "critic", text: "Рефлексия (Критик): Анализ логов ошибки. Проблема в функции X." },
+                    { type: "llm", text: "Генерация исправленной версии (Draft v2)..." },
+                    { type: "action", text: "Повторное тестирование..." },
+                    { type: "obs", text: "Все тесты пройдены успешно!" },
+                    { type: "output", text: "Проверенный ответ отправлен пользователю." }
+                ]
+            },
+            multiagent: {
+                name: "Multi-Agent (Команда агентов)",
+                desc: "Несколько специализированных агентов (Менеджер, Кодер, Тестировщик, Ревьюер) общаются друг с другом для решения задачи.",
+                metrics: {
+                    easy:   { success: 95, cost: 95, latency: 95, steps: 15, realCost: "$0.200", realTime: "30 сек", realSteps: "15 шагов" },
+                    medium: { success: 94, cost: 98, latency: 98, steps: 20, realCost: "$0.350", realTime: "45 сек", realSteps: "20 шагов" },
+                    hard:   { success: 96, cost: 100, latency: 100, steps: 25, realCost: "$0.600+", realTime: "1-2 мин", realSteps: "25+ шагов" }
+                },
+                analysis: {
+                    easy: "Абсурд! Вы собрали совет директоров, чтобы написать одно предложение. Иногда агенты даже запутывают друг друга на простых задачах.",
+                    medium: "Слишком тяжело. Коммуникационные накладные расходы (передача контекста от агента к агенту) сжирают бюджет.",
+                    hard: "Вершина эволюции для сложнейших задач. Архитектор проектирует, Кодер пишет, Безопасник проверяет уязвимости. Очень дорого и долго, но решает задачи уровня Senior-разработчика."
+                },
+                verdict: { easy: ["Абсурд!", "bg-red-500/20 text-red-400 border-red-500/50"], medium: ["Слишком дорого", "bg-amber-500/20 text-amber-400 border-amber-500/50"], hard: ["Мощно (Enterprise)", "bg-emerald-500/20 text-emerald-400 border-emerald-500/50"] },
+                logs: [
+                    { type: "input", text: "[PM Агент]: Получил ТЗ. Декомпозирую задачу и передаю Архитектору." },
+                    { type: "think", text: "[Архитектор]: Создал структуру проекта. Передаю Разработчику." },
+                    { type: "llm", text: "[Разработчик]: Пишу основной модуль... Готово. Передаю QA." },
+                    { type: "action", text: "[QA Агент]: Запускаю автотесты..." },
+                    { type: "error", text: "[QA Агент]: Найдена уязвимость и 2 бага. Возвращаю Разработчику." },
+                    { type: "llm", text: "[Разработчик]: Исправил баги. Проверяй." },
+                    { type: "obs", text: "[QA Агент]: Теперь чисто. Передаю Тех. писателю для документации." },
+                    { type: "output", text: "[PM Агент]: Проект собран, задокументирован и сдан клиенту!" }
+                ]
+            }
+        };
+
+        // Текущее состояние
+        let currentTask = 'easy';
+        let currentStrategy = 'zeroshot';
+        let logTimeouts = [];
+
+        // Инициализация при загрузке
+        document.addEventListener('DOMContentLoaded', () => {
+            renderStrategyButtons();
+            updateDashboard();
+        });
+
+        // Отрисовка кнопок стратегий
+        function renderStrategyButtons() {
+            const container = document.getElementById('strategy-selector');
+            container.innerHTML = '';
+
+            for (const [key, data] of Object.entries(strategies)) {
+                const isSelected = key === currentStrategy;
+                const btn = document.createElement('div');
+                btn.className = `p-3 rounded-lg border cursor-pointer transition-all ${
+                    isSelected 
+                    ? 'border-indigo-500 bg-indigo-500/10 shadow-[0_0_15px_rgba(99,102,241,0.15)]' 
+                    : 'border-gray-800 bg-gray-850 hover:border-gray-700 hover:bg-gray-800'
+                }`;
+                btn.onclick = () => setStrategy(key);
+                
+                btn.innerHTML = `
+                    <div class="flex justify-between items-center mb-1">
+                        <span class="font-semibold text-sm ${isSelected ? 'text-indigo-300' : 'text-gray-200'}">${data.name}</span>
+                        <div class="w-4 h-4 rounded-full border flex items-center justify-center ${isSelected ? 'border-indigo-500' : 'border-gray-600'}">
+                            ${isSelected ? '<div class="w-2 h-2 rounded-full bg-indigo-500"></div>' : ''}
+                        </div>
+                    </div>
+                    <p class="text-xs text-gray-400 leading-relaxed">${data.desc}</p>
+                `;
+                container.appendChild(btn);
+            }
+        }
+
+        // Смена задачи
+        function setTask(task) {
+            currentTask = task;
+            
+            // Обновление UI кнопок задач
+            const buttons = document.querySelectorAll('.task-btn');
+            const tasks = ['easy', 'medium', 'hard'];
+            buttons.forEach((btn, idx) => {
+                if (tasks[idx] === task) {
+                    btn.className = "task-btn active py-2 px-3 rounded-lg text-sm font-medium border border-indigo-500 bg-indigo-500/20 text-white transition";
+                } else {
+                    btn.className = "task-btn py-2 px-3 rounded-lg text-sm font-medium border border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700 transition";
+                }
+            });
+
+            updateDashboard();
+        }
+
+        // Смена стратегии
+        function setStrategy(strategy) {
+            currentStrategy = strategy;
+            renderStrategyButtons();
+            updateDashboard();
+        }
+
+        // Обновление метрик и запуск симуляции
+        function updateDashboard() {
+            const stratData = strategies[currentStrategy];
+            const metrics = stratData.metrics[currentTask];
+            const verdict = stratData.verdict[currentTask];
+
+            // Обновление текста значений
+            document.getElementById('val-success').innerText = `${metrics.success}%`;
+            document.getElementById('val-cost').innerText = metrics.realCost;
+            document.getElementById('val-latency').innerText = metrics.realTime;
+            document.getElementById('val-steps').innerText = metrics.realSteps;
+
+            // Обновление полосок (ширина)
+            const barSuccess = document.getElementById('bar-success');
+            const barCost = document.getElementById('bar-cost');
+            const barLatency = document.getElementById('bar-latency');
+            const barSteps = document.getElementById('bar-steps');
+
+            barSuccess.style.width = `${metrics.success}%`;
+            barCost.style.width = `${metrics.cost}%`;
+            barLatency.style.width = `${metrics.latency}%`;
+            barSteps.style.width = `${(metrics.steps / 25) * 100}%`; // 25 макс шагов
+
+            // Динамическое окрашивание полоски успешности
+            barSuccess.className = `metric-bar h-3 rounded-full ${
+                metrics.success >= 80 ? 'bg-emerald-500' : 
+                metrics.success >= 50 ? 'bg-amber-500' : 'bg-red-500'
+            }`;
+
+            // Динамическое окрашивание стоимости (чем больше, тем краснее)
+            barCost.className = `metric-bar h-3 rounded-full ${
+                metrics.cost <= 30 ? 'bg-emerald-500' : 
+                metrics.cost <= 70 ? 'bg-amber-500' : 'bg-red-500'
+            }`;
+
+            // Обновление бейджа вердикта и описания
+            const badge = document.getElementById('badge-verdict');
+            badge.innerText = verdict[0];
+            badge.className = `text-xs px-3 py-1 rounded-full font-medium border ${verdict[1]}`;
+
+            document.getElementById('analysis-text').innerText = stratData.analysis[currentTask];
+
+            // Запуск терминала
+            playLogs(stratData.logs);
+        }
+
+        // Симуляция логов в терминале
+        function playLogs(logs) {
+            // Очистка предыдущих таймеров
+            logTimeouts.forEach(clearTimeout);
+            logTimeouts = [];
+
+            const terminal = document.getElementById('terminal-logs');
+            terminal.innerHTML = '';
+
+            // Задержка между шагами зависит от выбранной стратегии (для наглядности Latency)
+            const stepDelay = currentStrategy === 'zeroshot' ? 200 : 450;
+
+            logs.forEach((log, index) => {
+                const timeout = setTimeout(() => {
+                    const div = document.createElement('div');
+                    div.className = 'log-entry flex items-start space-x-2';
+                    
+                    let badge = '';
+                    let textColor = 'text-gray-300';
+
+                    switch(log.type) {
+                        case 'input':
+                            badge = '<span class="text-indigo-400 font-bold">[IN]</span>'; break;
+                        case 'think':
+                            badge = '<span class="text-purple-400 font-bold">[МЫСЛЬ]</span>'; 
+                            textColor = 'text-purple-200 italic'; break;
+                        case 'action':
+                            badge = '<span class="text-amber-400 font-bold">[TOOL]</span>'; 
+                            textColor = 'text-amber-200'; break;
+                        case 'obs':
+                            badge = '<span class="text-cyan-400 font-bold">[OBS]</span>'; break;
+                        case 'error':
+                            badge = '<span class="text-red-500 font-bold">[ERR]</span>'; 
+                            textColor = 'text-red-400'; break;
+                        case 'critic':
+                            badge = '<span class="text-pink-400 font-bold">[КРИТИК]</span>'; 
+                            textColor = 'text-pink-200'; break;
+                        case 'llm':
+                            badge = '<span class="text-blue-400 font-bold">[LLM]</span>'; break;
+                        case 'output':
+                            badge = '<span class="text-emerald-400 font-bold">[OUT]</span>'; 
+                            textColor = 'text-emerald-300 font-semibold'; break;
+                    }
+
+                    const time = new Date().toISOString().split('T')[1].slice(0, 8);
+                    div.innerHTML = `
+                        <span class="text-gray-600 select-none">${time}</span>
+                        ${badge}
+                        <span class="${textColor}">${log.text}</span>
+                    `;
+                    
+                    terminal.appendChild(div);
+                    terminal.scrollTop = terminal.scrollHeight;
+                }, index * stepDelay);
+
+                logTimeouts.push(timeout);
+            });
+        }
+
+        function replaySimulation() {
+            playLogs(strategies[currentStrategy].logs);
+        }
+    </script>
+</body>
+</html>
+```
+
+### Что умеет этот сайт (образовательные фичи):
+
+1. **Контекстная зависимость (Сложность задачи):** 
+   Пользователь быстро поймет, что *Multi-Agent* система не всегда «лучшая». На простой задаче она получит вердикт «Абсурд!», так как потратит 30 секунд и $0.20 там, где *Zero-shot* справится за 0.8 сек и доли цента.
+2. **Визуализация метрик с цветовой кодировкой:**
+   Полоски прогресса плавно анимируются и меняют цвет (от зеленого к красному) в зависимости от того, насколько приемлема метрика (высокая стоимость = красный, высокая успешность = зеленый).
+3. **Симулятор терминала (`agent_execution.log`):**
+   В правом нижнем углу в реальном времени печатаются шаги, которые предпринимает агент (Мысль, Вызов инструмента, Ошибка, Рефлексия). Это визуально объясняет, откуда берется задержка (Latency) и количество шагов.
+4. **Аналитический блок и Глоссарий:**
+   При каждом клике обновляется текстовый вывод («Анализ выбора»), объясняющий плюсы и минусы текущей комбинации «Задача + Стратегия», а внизу страницы дана базовая теория.

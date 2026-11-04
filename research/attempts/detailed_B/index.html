@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Оценка AI-агентов: успешность, стоимость, задержка и количество шагов</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#control-panel">Перейти к панели управления</a>
+
+  <header class="site-header">
+    <div class="container">
+      <div class="header-badges">
+        <span class="sim-badge" role="note" aria-label="Статус стенда: учебная симуляция">
+          УЧЕБНАЯ СИМУЛЯЦИЯ · ДЕТЕРМИНИРОВАННАЯ МОДЕЛЬ
+        </span>
+        <span class="sim-subbadge">
+          Без вызова внешних LLM · Локальный расчёт в браузере
+        </span>
+      </div>
+
+      <h1>Оценка AI-агентов: успешность, стоимость, задержка и количество шагов</h1>
+      <p class="header-lead">
+        Интерактивный стенд для изучения инженерного компромисса при проектировании AI-агентов.
+        Оценивать агента только по доле правильных ответов недостаточно: добавление шагов планирования,
+        самопроверки и исправления способно повысить качество на сложных задачах, но требует дополнительных
+        вычислительных ресурсов, времени и шагов выполнения.
+      </p>
+
+      <div class="sim-disclaimer" role="region" aria-label="Предупреждение об учебной природе симуляции">
+        <strong>Важное примечание:</strong> на этой странице работает детерминированная учебная симуляция,
+        а не настоящая языковая модель. Каждый запуск формирует реальную последовательность шагов для каждой
+        выбранной задачи по прозрачным математическим правилам. Стоимость измеряется в условных единицах (у.е.,
+        где 1 у.е. = 100 условных токенов), а задержка — в миллисекундах модельного времени (мс).
+      </div>
+    </div>
+  </header>
+
+  <main class="container main-content">
+    <!-- 1. ПАНЕЛЬ УПРАВЛЕНИЯ -->
+    <section id="control-panel" class="card section-card" aria-labelledby="control-panel-title">
+      <div class="section-header">
+        <div>
+          <h2 id="control-panel-title">1. Панель выбора стратегии и набора задач</h2>
+          <p class="section-subtitle">
+            Выберите архитектуру цикла рассуждений агента и отфильтруйте выборку задач, затем нажмите «Запустить симуляцию».
+          </p>
+        </div>
+        <div class="run-counter-badge" id="run-counter-badge" aria-live="polite">
+          Выполнено запусков: 0
+        </div>
+      </div>
+
+      <div class="controls-grid">
+        <!-- Выбор стратегии -->
+        <fieldset class="control-fieldset">
+          <legend class="fieldset-legend">Стратегия работы AI-агента</legend>
+          <div class="strategy-options" role="radiogroup" aria-label="Стратегия работы AI-агента">
+            <label class="strategy-card" for="strategy-direct">
+              <input type="radio" name="strategy" id="strategy-direct" value="direct">
+              <span class="strategy-card-body">
+                <span class="strategy-title-row">
+                  <span class="strategy-name">1. Прямой ответ</span>
+                  <span class="strategy-steps-pill">1 шаг / задача</span>
+                </span>
+                <span class="strategy-flow">Последовательность: <code>Ответ</code></span>
+                <span class="strategy-desc">
+                  Агент сразу генерирует решение без декомпозиции и валидации. Минимальные затраты и задержка,
+                  но высокая уязвимость на многошаговых и граничных задачах.
+                </span>
+              </span>
+            </label>
+
+            <label class="strategy-card" for="strategy-plan-answer">
+              <input type="radio" name="strategy" id="strategy-plan-answer" value="plan_answer" checked>
+              <span class="strategy-card-body">
+                <span class="strategy-title-row">
+                  <span class="strategy-name">2. Планирование и ответ</span>
+                  <span class="strategy-steps-pill">2 шага / задача</span>
+                </span>
+                <span class="strategy-flow">Последовательность: <code>План → Ответ</code></span>
+                <span class="strategy-desc">
+                  Перед ответом агент строит план рассуждений. Устраняет структурные ошибки композиции,
+                  но оставляет мелкие дефекты формата, синтаксиса или граничных условий.
+                </span>
+              </span>
+            </label>
+
+            <label class="strategy-card" for="strategy-plan-verify">
+              <input type="radio" name="strategy" id="strategy-plan-verify" value="plan_verify">
+              <span class="strategy-card-body">
+                <span class="strategy-title-row">
+                  <span class="strategy-name">3. Планирование, ответ и проверка</span>
+                  <span class="strategy-steps-pill">3–4 шага / задача</span>
+                </span>
+                <span class="strategy-flow">Последовательность: <code>План → Ответ → Проверка [→ Исправление]</code></span>
+                <span class="strategy-desc">
+                  После ответа запускается валидация. Если обнаружена <em>исправимая ошибка</em>, добавляется
+                  отдельный шаг исправления. Заведомо <em>неисправимые ошибки</em> проверка исправить не может.
+                </span>
+              </span>
+            </label>
+          </div>
+        </fieldset>
+
+        <!-- Выбор набора задач -->
+        <fieldset class="control-fieldset">
+          <legend class="fieldset-legend">Выборка задач по уровню сложности</legend>
+
+          <div class="preset-buttons-group" role="group" aria-label="Быстрые пресеты выбора задач">
+            <button type="button" class="btn btn-preset active" data-preset="all">
+              Все задачи (12)
+            </button>
+            <button type="button" class="btn btn-preset" data-preset="easy">
+              Только простые (4)
+            </button>
+            <button type="button" class="btn btn-preset" data-preset="medium">
+              Только средние (4)
+            </button>
+            <button type="button" class="btn btn-preset" data-preset="hard">
+              Только сложные (4)
+            </button>
+            <button type="button" class="btn btn-preset btn-preset-empty" data-preset="none">
+              Снять выбор (0 задач)
+            </button>
+          </div>
+
+          <div class="difficulty-checkboxes" role="group" aria-label="Фильтр уровней сложности">
+            <label class="checkbox-card" for="diff-easy">
+              <input type="checkbox" id="diff-easy" value="easy" checked>
+              <span class="checkbox-card-content">
+                <span class="diff-header">
+                  <span class="badge badge-easy">Простая (K = 1)</span>
+                  <span class="diff-count">4 задачи</span>
+                </span>
+                <span class="diff-desc">Базовый тариф шагов (×1). Включает типовые запросы и 1 задачу со строгой JSON-схемой.</span>
+              </span>
+            </label>
+
+            <label class="checkbox-card" for="diff-medium">
+              <input type="checkbox" id="diff-medium" value="medium" checked>
+              <span class="checkbox-card-content">
+                <span class="diff-header">
+                  <span class="badge badge-medium">Средняя (K = 2)</span>
+                  <span class="diff-count">4 задачи</span>
+                </span>
+                <span class="diff-desc">Множитель ресурсов ×2. Включает часовые пояса, SQL, баланс и 1 задачу без доступа к ERP.</span>
+              </span>
+            </label>
+
+            <label class="checkbox-card" for="diff-hard">
+              <input type="checkbox" id="diff-hard" value="hard" checked>
+              <span class="checkbox-card-content">
+                <span class="diff-header">
+                  <span class="badge badge-hard">Сложная (K = 3)</span>
+                  <span class="diff-count">4 задачи</span>
+                </span>
+                <span class="diff-desc">Множитель ресурсов ×3. Архитектура, рекурсия, смарт-контракт и 1 противоречивое ТЗ.</span>
+              </span>
+            </label>
+          </div>
+
+          <div class="selection-summary" id="selection-summary" aria-live="polite">
+            Выбрано задач: <strong>12 из 12</strong> (Простые: 4, Средние: 4, Сложные: 4)
+          </div>
+        </fieldset>
+      </div>
+
+      <!-- Сообщения об ошибках / устаревшем состоянии -->
+      <div id="validation-alert" class="alert alert-error hidden" role="alert"></div>
+      <div id="stale-alert" class="alert alert-warning hidden" role="status" aria-live="polite"></div>
+
+      <!-- Кнопки действий -->
+      <div class="action-bar">
+        <button type="button" id="run-btn" class="btn btn-primary">
+          Запустить симуляцию
+        </button>
+        <button type="button" id="reset-btn" class="btn btn-secondary">
+          Сбросить результаты и параметры
+        </button>
+      </div>
+    </section>
+
+    <!-- ПАМЯТКА КОНТРОЛЬНОГО СЦЕНАРИЯ -->
+    <section id="scenario-guide" class="card section-card scenario-card" aria-labelledby="scenario-title">
+      <div class="scenario-header">
+        <div>
+          <h2 id="scenario-title">Контрольный сценарий проверки компромисса (воспроизводимость)</h2>
+          <p class="section-subtitle">
+            Повторите эти шаги на одинаковом наборе задач («Все задачи (12)»), чтобы наглядно проверить работу проверки, исправления и детерминизм расчётов:
+          </p>
+        </div>
+        <span class="badge badge-neutral" id="scenario-progress-badge">Прогресс сценария: 0 / 3</span>
+      </div>
+      <ol class="scenario-steps">
+        <li id="scen-step-1">
+          Оставьте выборку <strong>«Все задачи (12)»</strong>, выберите стратегию <strong>«2. Планирование и ответ»</strong> и нажмите <strong>«Запустить симуляцию»</strong> (ожидаемо: успешность <code>41.7%</code>, <code>5 из 12</code> задач, <code>24 шага</code>, <code>240 у.е.</code>, <code>18 000 мс</code>).
+        </li>
+        <li id="scen-step-2">
+          Не меняя набор задач, переключите стратегию на <strong>«3. Планирование, ответ и проверка»</strong> и нажмите <strong>«Запустить симуляцию»</strong> (проверка исправит 5 исправимых ошибок, 2 неисправимые ошибки в задачах <code>T-08</code> и <code>T-11</code> останутся; успешность вырастет до <code>83.3%</code>, <code>10 из 12</code> задач, <code>41 шаг</code>, <code>367 у.е.</code>, <code>28 400 мс</code>).
+        </li>
+        <li id="scen-step-3">
+          Изучите блок <strong>«Сравнение запусков»</strong> ниже: прирост составил ровно <code>+17 шагов</code> (12 проверок + 5 исправлений), <code>+127 у.е.</code> и <code>+10 400 мс</code>. Повторный запуск любой из стратегий даст идентичные числа.
+        </li>
+      </ol>
+    </section>
+
+    <!-- 2. КАРТОЧКИ ЧЕТЫРЁХ ОСНОВНЫХ МЕТРИК -->
+    <section id="metrics-section" class="card section-card" aria-labelledby="metrics-title">
+      <div class="section-header">
+        <div>
+          <h2 id="metrics-title">2. Основные метрики запуска</h2>
+          <p class="section-subtitle" id="metrics-run-context">
+            Запуск ещё не выполнялся. Выберите параметры выше и нажмите «Запустить симуляцию».
+          </p>
+        </div>
+        <div id="consistency-badge" class="consistency-badge hidden" role="status">
+          Сверка пройдена: карточки = сумма таблицы задач = сумма журнала шагов
+        </div>
+      </div>
+
+      <!-- Пустое состояние до первого запуска -->
+      <div id="metrics-empty-state" class="empty-state">
+        <div class="empty-state-title">Нет данных для отображения метрик</div>
+        <p class="empty-state-text">
+          До первого запуска показатели не заполняются нулями, чтобы их нельзя было принять за результат расчёта.
+          Выберите стратегию агента и нажмите кнопку <strong>«Запустить симуляцию»</strong>.
+        </p>
+      </div>
+
+      <!-- Сетка из 4 карточек метрик (показывается после запуска) -->
+      <div id="metrics-grid" class="metrics-grid hidden" aria-live="polite">
+        <article class="metric-card metric-card-success">
+          <div class="metric-header">
+            <span class="metric-label">Успешность (Success Rate)</span>
+            <span class="metric-formula-hint" title="Успешно решённые задачи / Общее число задач × 100%">Формула: M / N × 100%</span>
+          </div>
+          <div class="metric-value" id="metric-success-rate">—</div>
+          <div class="metric-subvalue" id="metric-success-count">—</div>
+          <div class="metric-breakdown" id="metric-success-breakdown">—</div>
+        </article>
+
+        <article class="metric-card metric-card-cost">
+          <div class="metric-header">
+            <span class="metric-label">Общая стоимость (Total Cost)</span>
+            <span class="metric-formula-hint" title="Сумма стоимости всех выполненных шагов">Формула: Σ cost(шаг)</span>
+          </div>
+          <div class="metric-value" id="metric-total-cost">—</div>
+          <div class="metric-subvalue" id="metric-avg-cost">—</div>
+          <div class="metric-breakdown" id="metric-cost-breakdown">—</div>
+        </article>
+
+        <article class="metric-card metric-card-latency">
+          <div class="metric-header">
+            <span class="metric-label">Общая задержка (Total Latency)</span>
+            <span class="metric-formula-hint" title="Сумма длительности всех выполненных шагов">Формула: Σ latency(шаг)</span>
+          </div>
+          <div class="metric-value" id="metric-total-latency">—</div>
+          <div class="metric-subvalue" id="metric-avg-latency">—</div>
+          <div class="metric-breakdown" id="metric-latency-breakdown">—</div>
+        </article>
+
+        <article class="metric-card metric-card-steps">
+          <div class="metric-header">
+            <span class="metric-label">Количество шагов (Step Count)</span>
+            <span class="metric-formula-hint" title="Фактическое число операций во всех задачах">Формула: Σ шагов</span>
+          </div>
+          <div class="metric-value" id="metric-total-steps">—</div>
+          <div class="metric-subvalue" id="metric-avg-steps">—</div>
+          <div class="metric-breakdown" id="metric-steps-breakdown">—</div>
+        </article>
+      </div>
+
+      <!-- 3. КРАТКИЙ ДИНАМИЧЕСКИЙ ВЫВОД -->
+      <div id="dynamic-conclusion" class="conclusion-box hidden" role="region" aria-labelledby="conclusion-heading">
+        <h3 id="conclusion-heading">Аналитический вывод по результатам запуска</h3>
+        <div id="conclusion-content" class="conclusion-content"></div>
+      </div>
+    </section>
+
+    <!-- 4. ОБЛАСТЬ СРАВНЕНИЯ ЗАПУСКОВ -->
+    <section id="comparison-section" class="card section-card" aria-labelledby="comparison-title">
+      <div class="section-header">
+        <div>
+          <h2 id="comparison-title">3. Сравнение запусков и оценка компромисса</h2>
+          <p class="section-subtitle">
+            Сопоставление двух запусков показывает, какую цену в шагах, стоимости и задержке агент платит за изменение качества.
+          </p>
+        </div>
+      </div>
+
+      <!-- Пустое состояние сравнения (меньше 2 запусков) -->
+      <div id="comparison-empty-state" class="empty-state">
+        <div class="empty-state-title">Недостаточно данных для сравнения запусков</div>
+        <p class="empty-state-text" id="comparison-empty-text">
+          Сейчас в истории сохранён <strong>0 запусков</strong>. Чтобы сравнить стратегии, выполните сначала один запуск
+          (например, «Планирование и ответ»), затем выберите другую стратегию на том же наборе задач (например,
+          «Планирование, ответ и проверка») и нажмите «Запустить симуляцию» второй раз.
+        </p>
+      </div>
+
+      <!-- Рабочая область сравнения (показывается, когда >= 2 запусков) -->
+      <div id="comparison-content" class="hidden">
+        <div class="comparison-selectors">
+          <div class="selector-group">
+            <label for="compare-run-a">Базовый запуск (Запуск А):</label>
+            <select id="compare-run-a" class="form-select"></select>
+          </div>
+          <div class="selector-group">
+            <label for="compare-run-b">Сравниваемый запуск (Запуск Б):</label>
+            <select id="compare-run-b" class="form-select"></select>
+          </div>
+        </div>
+
+        <!-- Статус совпадения набора задач -->
+        <div id="comparison-taskset-status" class="alert" role="status" aria-live="polite"></div>
+
+        <!-- Карточки дельт по 4 метрикам -->
+        <div class="comparison-grid" id="comparison-grid"></div>
+
+        <!-- Таблица построчного изменения исходов задач -->
+        <div class="comparison-tasks-wrapper" id="comparison-tasks-wrapper">
+          <h3 class="subsection-title">Позадачное сравнение исходов и накладных расходов (Запуск А → Запуск Б)</h3>
+          <div class="table-responsive">
+            <table class="data-table" id="comparison-tasks-table">
+              <thead>
+                <tr>
+                  <th scope="col">Задача</th>
+                  <th scope="col">Сложность</th>
+                  <th scope="col">Исход в Запуске А</th>
+                  <th scope="col">Исход в Запуске Б</th>
+                  <th scope="col">Δ Шагов</th>
+                  <th scope="col">Δ Стоимости</th>
+                  <th scope="col">Δ Задержки</th>
+                  <th scope="col">Интерпретация эффекта</th>
+                </tr>
+              </thead>
+              <tbody id="comparison-tasks-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. ТАБЛИЦА РЕЗУЛЬТАТОВ ПО ЗАДАЧАМ -->
+    <section id="tasks-table-section" class="card section-card" aria-labelledby="tasks-table-title">
+      <div class="section-header">
+        <div>
+          <h2 id="tasks-table-title">4. Результаты по каждой задаче текущего запуска</h2>
+          <p class="section-subtitle">
+            Детализация исхода, типа ошибки, цепочки выполненных операций и затрат по каждой задаче выборки.
+          </p>
+        </div>
+      </div>
+
+      <div id="tasks-empty-state" class="empty-state">
+        <div class="empty-state-title">Таблица задач пуста</div>
+        <p class="empty-state-text">
+          Запустите симуляцию, чтобы увидеть результаты прохождения каждой задачи выбранного набора.
+        </p>
+      </div>
+
+      <div id="tasks-table-container" class="hidden">
+        <div class="table-responsive">
+          <table class="data-table" id="tasks-results-table" aria-describedby="tasks-table-title">
+            <thead>
+              <tr>
+                <th scope="col">Код и задача</th>
+                <th scope="col">Сложность</th>
+                <th scope="col">Исход и диагностика</th>
+                <th scope="col">Цепочка шагов</th>
+                <th scope="col" class="num-col">Шаги</th>
+                <th scope="col" class="num-col">Стоимость</th>
+                <th scope="col" class="num-col">Задержка</th>
+                <th scope="col">Журнал</th>
+              </tr>
+            </thead>
+            <tbody id="tasks-results-tbody"></tbody>
+            <tfoot id="tasks-results-tfoot"></tfoot>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6. ЖУРНАЛ ОПЕРАЦИЙ -->
+    <section id="journal-section" class="card section-card" aria-labelledby="journal-title">
+      <div class="section-header">
+        <div>
+          <h2 id="journal-title">5. Пошаговый журнал операций выбранного запуска</h2>
+          <p class="section-subtitle">
+            Полная трассировка каждого шага агента с указанием его вклада в общую стоимость, задержку и количество операций.
+          </p>
+        </div>
+      </div>
+
+      <div id="journal-empty-state" class="empty-state">
+        <div class="empty-state-title">Журнал операций пуст</div>
+        <p class="empty-state-text">
+          После запуска симуляции здесь появится хронологический список всех выполненных шагов агента.
+        </p>
+      </div>
+
+      <div id="journal-container" class="hidden">
+        <div class="journal-filters">
+          <div class="selector-group">
+            <label for="journal-task-filter">Фильтр по задаче:</label>
+            <select id="journal-task-filter" class="form-select">
+              <option value="all">Все задачи запуска</option>
+            </select>
+          </div>
+          <div class="selector-group">
+            <label for="journal-step-filter">Фильтр по типу операции:</label>
+            <select id="journal-step-filter" class="form-select">
+              <option value="all">Все типы операций</option>
+              <option value="plan">Планирование (plan)</option>
+              <option value="answer">Генерация ответа (answer)</option>
+              <option value="verify">Проверка ответа (verify)</option>
+              <option value="fix">Исправление ошибки (fix)</option>
+            </select>
+          </div>
+          <button type="button" id="journal-reset-filter-btn" class="btn btn-secondary btn-sm">
+            Показать все шаги
+          </button>
+        </div>
+
+        <div class="table-responsive">
+          <table class="data-table" id="journal-table" aria-describedby="journal-title">
+            <thead>
+              <tr>
+                <th scope="col" class="num-col">№ шага</th>
+                <th scope="col">Задача</th>
+                <th scope="col">Тип операции</th>
+                <th scope="col">Действие агента и результат шага</th>
+                <th scope="col" class="num-col">Вклад: шаги</th>
+                <th scope="col" class="num-col">Вклад: стоимость</th>
+                <th scope="col" class="num-col">Вклад: задержка</th>
+              </tr>
+            </thead>
+            <tbody id="journal-tbody"></tbody>
+            <tfoot id="journal-tfoot"></tfoot>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- 7. РАСКРЫВАЕМЫЙ РАЗДЕЛ С ФОРМУЛАМИ, КОЭФФИЦИЕНТАМИ И ОГРАНИЧЕНИЯМИ СИМУЛЯЦИИ -->
+    <section id="rules-section" class="card section-card" aria-labelledby="rules-title">
+      <details class="rules-details" id="rules-details" open>
+        <summary class="rules-summary">
+          <span id="rules-title" class="rules-summary-title">
+            6. Правила симуляции, математические формулы, коэффициенты и ограничения модели
+          </span>
+          <span class="rules-toggle-hint">Нажмите, чтобы свернуть / развернуть</span>
+        </summary>
+
+        <div class="rules-body">
+          <div class="rules-grid">
+            <div class="rules-block">
+              <h3>Формулы расчёта агрегированных метрик</h3>
+              <ul class="rules-list">
+                <li>
+                  <strong>Успешность (Success Rate):</strong><br>
+                  <code>Успешность = (Количество успешно решённых задач / Общее количество задач в выборке) × 100%</code>
+                </li>
+                <li>
+                  <strong>Общая стоимость (Total Cost):</strong><br>
+                  <code>Общая стоимость = Σ Стоимость(шаг_j)</code> по всем фактически выполненным шагам во всех задачах выборки (в условных единицах, <code>1 у.е. = 100 усл. токенов</code>).
+                </li>
+                <li>
+                  <strong>Общая задержка (Total Latency):</strong><br>
+                  <code>Общая задержка = Σ Длительность(шаг_j)</code> по всем фактически выполненным шагам (в миллисекундах модельного времени, <code>мс</code>).
+                </li>
+                <li>
+                  <strong>Количество шагов (Step Count):</strong><br>
+                  <code>Количество шагов = Фактическое число операций</code>, зафиксированных в журнале запуска.
+                </li>
+                <li>
+                  <strong>Средние показатели на задачу (справочно):</strong><br>
+                  Деление общей стоимости, задержки и количества шагов на число задач в выборке <code>N</code>. Отображаются дополнительно и не заменяют суммарные показатели.
+                </li>
+              </ul>
+            </div>
+
+            <div class="rules-block">
+              <h3>Коэффициенты сложности и таблица стоимости/длительности шагов</h3>
+              <p>
+                Каждая задача имеет уровень сложности и соответствующий множитель ресурсоёмкости <code>K</code>:
+                <strong>Простая</strong> (<code>K = 1</code>), <strong>Средняя</strong> (<code>K = 2</code>), <strong>Сложная</strong> (<code>K = 3</code>).
+                Стоимость и задержка каждого шага вычисляются детерминированно:
+                <code>Стоимость = Базовая_стоимость × K</code>, <code>Задержка = Базовая_задержка × K</code>.
+              </p>
+              <div class="table-responsive">
+                <table class="data-table rules-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Тип операции</th>
+                      <th scope="col">База (K=1: Простая)</th>
+                      <th scope="col">Средняя (K=2)</th>
+                      <th scope="col">Сложная (K=3)</th>
+                      <th scope="col">Условие вызова</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><strong>Планирование</strong> (<code>plan</code>)</td>
+                      <td>4 у.е. / 300 мс</td>
+                      <td>8 у.е. / 600 мс</td>
+                      <td>12 у.е. / 900 мс</td>
+                      <td>Стратегии 2 и 3 (всегда 1-й шаг)</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Генерация ответа</strong> (<code>answer</code>)</td>
+                      <td>6 у.е. / 450 мс</td>
+                      <td>12 у.е. / 900 мс</td>
+                      <td>18 у.е. / 1350 мс</td>
+                      <td>Все стратегии (основной шаг)</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Проверка ответа</strong> (<code>verify</code>)</td>
+                      <td>3 у.е. / 250 мс</td>
+                      <td>6 у.е. / 500 мс</td>
+                      <td>9 у.е. / 750 мс</td>
+                      <td>Только стратегия 3 (после ответа)</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Исправление</strong> (<code>fix</code>)</td>
+                      <td>5 у.е. / 400 мс</td>
+                      <td>10 у.е. / 800 мс</td>
+                      <td>15 у.е. / 1200 мс</td>
+                      <td>Только стратегия 3 и <strong>только</strong> при обнаружении исправимой ошибки</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div class="rules-grid">
+            <div class="rules-block">
+              <h3>Логика исходов по типам задач и ошибок</h3>
+              <ul class="rules-list">
+                <li>
+                  <strong>Простые без рассуждений (T-01, T-02):</strong> решаются с первой попытки во всех трёх стратегиях. Добавление планирования и проверки здесь создаёт только накладные расходы без прироста качества.
+                </li>
+                <li>
+                  <strong>Задачи, требующие планирования (T-04, T-05, T-09):</strong> при «Прямом ответе» агент совершает структурную ошибку композиции. Предварительный шаг <code>plan</code> полностью устраняет причину ошибки, поэтому стратегии 2 и 3 решают задачу успешно без шага исправления.
+                </li>
+                <li>
+                  <strong>Задачи с исправимой ошибкой (T-03, T-06, T-07, T-10, T-12):</strong> даже при наличии плана в первичном ответе остаётся локальный проверяемый дефект (синтаксис JSON, граничный оператор <code>&gt;=</code>, контрольная сумма, пустой узел дерева или пропущенный счётчик состояния). Стратегия 2 завершается неудачей, а в стратегии 3 шаг <code>verify</code> локализует дефект и запускает шаг <code>fix</code>, переводящий задачу в статус «Успех».
+                </li>
+                <li>
+                  <strong>Задачи с неисправимой ошибкой (T-08, T-11):</strong> ошибка вызвана фундаментальным ограничением (отсутствие доступа к закрытой базе ERP в <code>T-08</code> или физически противоречивые требования заказчика в <code>T-11</code>). Шаг <code>verify</code> фиксирует невозможность корректного решения собственными силами агента, шаг <code>fix</code> не запускается, и задача закономерно остаётся нерешённой.
+                </li>
+              </ul>
+            </div>
+
+            <div class="rules-block">
+              <h3>Ограничения учебной симуляции</h3>
+              <ul class="rules-list">
+                <li>
+                  <strong>Полная детерминированность:</strong> в реальных LLM-агентах генерация стохастична (зависит от температуры и сэмплирования). Здесь для воспроизводимости учебных экспериментов исходы и затраты строго детерминированы.
+                </li>
+                <li>
+                  <strong>Линейная модель ресурсов:</strong> стоимость и задержка каждого типа шага зависят от базового тарифа операции и коэффициента сложности задачи <code>K</code>. В промышленной среде задержка также зависит от сетевого отклика внешних API и текущей нагрузки на GPU-кластер.
+                </li>
+                <li>
+                  <strong>Отсутствие серебряной пули:</strong> симуляция демонстрирует, что усложнение агента оправдано там, где цена ошибки высока, а задачи содержат сложные ограничения. На потоке простых запросов сложная стратегия лишь кратно увеличивает бюджет и время ожидания.
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </details>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <span>Образовательный стенд «Оценка AI-агентов: успешность, стоимость, задержка и количество шагов»</span>
+      <span>Статический локальный сайт (HTML + CSS + JS) · Детерминированная учебная симуляция</span>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
