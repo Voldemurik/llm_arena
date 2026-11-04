@@ -1,0 +1,1071 @@
+/*
+ * Учебная симуляция оценки AI-агентов.
+ * Полностью детерминированная: случайные числа не используются, seed не нужен.
+ *
+ * Как воспроизвести контрольный сценарий:
+ *  вручную — раздел 6 на странице (план+ответ → план+ответ+проверка на всём наборе → сравнение → повтор);
+ *  автоматически — кнопка «Выполнить контрольный сценарий» (функция runControlScenario ниже).
+ *
+ * Все итоговые показатели считаются из журнала шагов (steps) — готовых процентов и сумм в коде нет.
+ * Деньги считаются в целых «милли-у.е.» (1 у.е. = 1000), поэтому суммы точно сходятся.
+ */
+(function () {
+  'use strict';
+
+  /* ======================= 1. Правила симуляции ======================= */
+
+  const RULES = {
+    // Цена в милли-у.е. (1 у.е. = 1000 милли-у.е.)
+    price: { perCall: 100, perInputToken: 1, perOutputToken: 3 },
+    msInputTokensPerMs: 5,   // 5 входных токенов = 1 мс
+    msPerOutputToken: 15,    // 1 выходной токен = 15 мс
+    types: {
+      plan:   { label: 'Планирование', baseMs: 350, outBase: 80, outPerC: 50,
+                input: 'условие задачи (ctx)' },
+      answer: { label: 'Ответ',        baseMs: 400, outBase: 60, outPerC: 40,
+                input: 'ctx (+ токены плана, если план был)' },
+      verify: { label: 'Проверка',     baseMs: 300, outBase: 40, outPerC: 15,
+                input: 'ctx + токены ответа' },
+      fix:    { label: 'Исправление',  baseMs: 400, outBase: 60, outPerC: 40,
+                input: 'ctx + токены ответа + токены замечания проверки' }
+    }
+  };
+  const STEP_ORDER = ['plan', 'answer', 'verify', 'fix'];
+
+  const STRATEGIES = {
+    direct: {
+      id: 'direct', name: 'Прямой ответ', usePlan: false, useVerify: false,
+      chain: 'Ответ'
+    },
+    plan: {
+      id: 'plan', name: 'Планирование и ответ', usePlan: true, useVerify: false,
+      chain: 'План → Ответ'
+    },
+    verify: {
+      id: 'verify', name: 'Планирование, ответ и проверка', usePlan: true, useVerify: true,
+      chain: 'План → Ответ → Проверка → (Исправление, если ошибка исправима)'
+    }
+  };
+  const STRATEGY_ORDER = ['direct', 'plan', 'verify'];
+
+  const DIFF = {
+    easy:   { label: 'Простая',  group: 'Простые' },
+    medium: { label: 'Средняя',  group: 'Средние' },
+    hard:   { label: 'Сложная',  group: 'Сложные' }
+  };
+  const DIFF_ORDER = ['easy', 'medium', 'hard'];
+
+  const MAX_HISTORY = 8;
+
+  /* ======================= 2. Набор задач ======================= */
+  /*
+   * ctx — число входных токенов условия; complexity (c) — 1..5, влияет на длину выходных токенов.
+   * direct / planned — скрытое «истинное» состояние ответа при прямом ответе и при ответе по плану:
+   *   ok                      — ответ верен;
+   *   fixable(issue)          — ошибка, которую проверка обнаруживает и исправляет;
+   *   unfixable(issue)        — ошибка, которую проверка не исправит (нет данных/инструмента и т. п.).
+   */
+  const OK = { ok: true };
+  const fixable = (issue) => ({ ok: false, kind: 'fixable', issue: issue });
+  const unfixable = (issue) => ({ ok: false, kind: 'unfixable', issue: issue });
+
+  const TASKS = [
+    { id: 'E1', title: 'Столица страны', prompt: 'Назвать столицу Японии.',
+      difficulty: 'easy', complexity: 1, ctx: 40, direct: OK, planned: OK },
+    { id: 'E2', title: 'Перевод единиц', prompt: 'Перевести 2,5 км в метры.',
+      difficulty: 'easy', complexity: 1, ctx: 45, direct: OK, planned: OK },
+    { id: 'E3', title: 'Извлечение e-mail', prompt: 'Найти адрес электронной почты в тексте письма.',
+      difficulty: 'easy', complexity: 1, ctx: 120, direct: OK, planned: OK },
+    { id: 'E4', title: 'Тональность отзыва', prompt: 'Определить тональность отзыва «Доставили вовремя, всё отлично».',
+      difficulty: 'easy', complexity: 1, ctx: 90, direct: OK, planned: OK },
+    { id: 'E5', title: 'Сортировка чисел', prompt: 'Отсортировать список из пяти чисел по возрастанию.',
+      difficulty: 'easy', complexity: 1, ctx: 70, direct: OK, planned: OK },
+
+    { id: 'M1', title: 'Итог заказа со скидкой', prompt: 'Посчитать итог заказа: скидка 15 % на товары, затем доставка 300 ₽.',
+      difficulty: 'medium', complexity: 2, ctx: 220,
+      direct: fixable('скидка 15 % применена и к стоимости доставки'), planned: OK },
+    { id: 'M2', title: 'Окно для встречи', prompt: 'Найти общее свободное время для трёх участников по их календарям.',
+      difficulty: 'medium', complexity: 3, ctx: 380,
+      direct: unfixable('не учтено различие часовых поясов, а проверка повторяет то же упрощение'), planned: OK },
+    { id: 'M3', title: 'SQL-запрос с JOIN', prompt: 'Составить SQL-запрос по заказам клиентов из двух таблиц с фильтром по дате.',
+      difficulty: 'medium', complexity: 3, ctx: 300,
+      direct: fixable('перепутано условие соединения таблиц'),
+      planned: fixable('в фильтре даты указан несуществующий столбец') },
+    { id: 'M4', title: 'Сжатие текста', prompt: 'Сократить абзац до трёх пунктов, сохранив все даты.',
+      difficulty: 'medium', complexity: 2, ctx: 260, direct: OK, planned: OK },
+    { id: 'M5', title: 'Курс валюты на сегодня', prompt: 'Назвать курс евро на сегодня без доступа к актуальным данным.',
+      difficulty: 'medium', complexity: 2, ctx: 90,
+      direct: unfixable('нет источника актуальных данных, ответ был бы выдуман'),
+      planned: unfixable('план не создаёт недостающих данных') },
+
+    { id: 'H1', title: 'Маршрут доставки', prompt: 'Построить маршрут через шесть точек с учётом окон времени и грузоподъёмности.',
+      difficulty: 'hard', complexity: 5, ctx: 520,
+      direct: unfixable('жадный порядок точек нарушает окна времени, а проверка не видит нарушения'), planned: OK },
+    { id: 'H2', title: 'Противоречия в договоре', prompt: 'Найти в договоре противоречащие друг другу пункты о сроках оплаты.',
+      difficulty: 'hard', complexity: 4, ctx: 600,
+      direct: fixable('пропущен пункт из приложения к договору'),
+      planned: fixable('перепутана редакция пункта 4.2') },
+    { id: 'H3', title: 'Закрытый внутренний отчёт', prompt: 'Подтвердить цифру из внутреннего отчёта, к которому у агента нет доступа.',
+      difficulty: 'hard', complexity: 4, ctx: 150,
+      direct: unfixable('у агента нет доступа к закрытому отчёту'),
+      planned: unfixable('подтвердить цифру без доступа к источнику невозможно') },
+    { id: 'H4', title: 'Свод бюджета проекта', prompt: 'Свести бюджет проекта из четырёх таблиц с разными валютами и налогами.',
+      difficulty: 'hard', complexity: 5, ctx: 560,
+      direct: unfixable('ошибка конвертации валюты распространилась на все итоги'),
+      planned: unfixable('в таблицах противоречивые курсы, верный выбрать нельзя без уточнения у пользователя') },
+    { id: 'H5', title: 'Отладка функции', prompt: 'Найти и исправить ошибку в функции на 40 строк по тексту тестов.',
+      difficulty: 'hard', complexity: 4, ctx: 450,
+      direct: fixable('исправлено не то условие — повторный прогон тестов показал бы это'), planned: OK }
+  ];
+
+  /* ======================= 3. Ядро симуляции ======================= */
+
+  function outTokens(type, task) {
+    const r = RULES.types[type];
+    return r.outBase + r.outPerC * task.complexity;
+  }
+
+  function buildStep(type, task, tokensIn, after, note) {
+    const r = RULES.types[type];
+    const tokensOut = outTokens(type, task);
+    const cost = RULES.price.perCall
+      + tokensIn * RULES.price.perInputToken
+      + tokensOut * RULES.price.perOutputToken;
+    const latency = r.baseMs
+      + Math.round(tokensIn / RULES.msInputTokensPerMs)
+      + tokensOut * RULES.msPerOutputToken;
+    return {
+      n: 0, type: type, taskId: task.id, taskTitle: task.title,
+      tokensIn: tokensIn, tokensOut: tokensOut, cost: cost, latency: latency,
+      after: after, note: note
+    };
+  }
+
+  function stateOf(outcome) {
+    if (outcome.ok) return 'correct';
+    return outcome.kind === 'fixable' ? 'wrong-fixable' : 'wrong-unfixable';
+  }
+
+  function simulateTask(strategy, task) {
+    const steps = [];
+    let planOut = 0;
+
+    if (strategy.usePlan) {
+      const p = buildStep('plan', task, task.ctx, null,
+        'Агент разбивает задачу на подзадачи и определяет порядок действий.');
+      planOut = p.tokensOut;
+      steps.push(p);
+    }
+
+    const outcome = strategy.usePlan ? task.planned : task.direct;
+    let cur = stateOf(outcome);
+    const ans = buildStep('answer', task, task.ctx + planOut, cur,
+      strategy.usePlan ? 'Ответ сформирован по плану.' : 'Ответ дан сразу, без плана и проверки.');
+    steps.push(ans);
+
+    let fixedByCheck = false;
+    if (strategy.useVerify) {
+      let note;
+      if (cur === 'correct') {
+        note = 'Проверка: ответ согласуется с условиями задачи, исправления не нужны.';
+      } else if (cur === 'wrong-fixable') {
+        note = 'Проверка нашла ошибку: ' + outcome.issue + '. Назначено исправление.';
+      } else {
+        note = 'Проверка не смогла устранить проблему: ' + outcome.issue +
+          '. Исправление не запускается, ответ остаётся неверным.';
+      }
+      const v = buildStep('verify', task, task.ctx + ans.tokensOut, cur, note);
+      steps.push(v);
+      if (cur === 'wrong-fixable') {
+        const f = buildStep('fix', task, task.ctx + ans.tokensOut + v.tokensOut, 'correct',
+          'Ошибка исправлена, ответ пересобран.');
+        steps.push(f);
+        cur = 'correct';
+        fixedByCheck = true;
+      }
+    }
+
+    const success = cur === 'correct';
+    let code, label, detail;
+    if (success && fixedByCheck) {
+      code = 'fixed'; label = 'Решена после исправления';
+      detail = 'Проверка нашла ошибку (' + outcome.issue + '), отдельный шаг исправления устранил её.';
+    } else if (success) {
+      code = 'solved'; label = 'Решена';
+      const parts = [];
+      if (!strategy.usePlan) parts.push('Ответ верен без дополнительных шагов.');
+      else if (!task.direct.ok) parts.push('План помог избежать ошибки, возможной при прямом ответе.');
+      else parts.push('Задача решалась и без планирования — шаг плана не изменил исход.');
+      if (strategy.useVerify) parts.push('Проверка лишь подтвердила ответ.');
+      detail = parts.join(' ');
+    } else {
+      code = 'failed'; label = 'Не решена';
+      const parts = ['Ответ неверен: ' + outcome.issue + '.'];
+      if (strategy.useVerify) {
+        parts.push('Проверка не исправила эту ошибку.');
+      } else if (outcome.kind === 'fixable') {
+        parts.push('Такую ошибку исправила бы проверка, но в этом запуске её нет.');
+      } else {
+        parts.push('Проверка такую ошибку не исправила бы.');
+      }
+      if (strategy.id === 'direct' && task.planned.ok) parts.push('Планирование устранило бы её.');
+      detail = parts.join(' ');
+    }
+
+    const result = {
+      taskId: task.id, title: task.title, prompt: task.prompt, difficulty: task.difficulty,
+      success: success, code: code, label: label, detail: detail,
+      finalKind: success ? null : outcome.kind,
+      directOk: task.direct.ok, plannedOk: task.planned.ok,
+      stepCount: steps.length,
+      cost: steps.reduce((t, s) => t + s.cost, 0),
+      latency: steps.reduce((t, s) => t + s.latency, 0)
+    };
+    return { steps: steps, result: result };
+  }
+
+  function computeMetrics(steps, results) {
+    const total = results.length;
+    const solved = results.filter((r) => r.success).length;
+    const byType = {};
+    STEP_ORDER.forEach((t) => { byType[t] = { count: 0, cost: 0, latency: 0 }; });
+    let cost = 0;
+    let latency = 0;
+    steps.forEach((s) => {
+      cost += s.cost;
+      latency += s.latency;
+      byType[s.type].count += 1;
+      byType[s.type].cost += s.cost;
+      byType[s.type].latency += s.latency;
+    });
+    return {
+      total: total, solved: solved, failed: total - solved,
+      successRate: total > 0 ? solved / total * 100 : null,
+      cost: cost, latency: latency, steps: steps.length,
+      avgCost: total > 0 ? cost / total : null,
+      avgLatency: total > 0 ? latency / total : null,
+      avgSteps: total > 0 ? steps.length / total : null,
+      byType: byType
+    };
+  }
+
+  function fingerprint(steps) {
+    const s = JSON.stringify(steps.map((x) =>
+      [x.n, x.taskId, x.type, x.tokensIn, x.tokensOut, x.cost, x.latency, x.after]));
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    return (h >>> 0).toString(16).padStart(8, '0');
+  }
+
+  function signatureOf(tasks) { return tasks.map((t) => t.id).join(','); }
+
+  // Чистая функция: каждый вызов строит журнал заново, ничего не накапливается.
+  function simulate(strategyId, tasks) {
+    const strategy = STRATEGIES[strategyId];
+    const steps = [];
+    const results = [];
+    tasks.forEach((task) => {
+      const r = simulateTask(strategy, task);
+      r.steps.forEach((s) => { s.n = steps.length + 1; steps.push(s); });
+      results.push(r.result);
+    });
+    return {
+      id: 0, strategyId: strategyId, setLabel: '',
+      signature: signatureOf(tasks), steps: steps, results: results,
+      metrics: computeMetrics(steps, results), fingerprint: fingerprint(steps)
+    };
+  }
+
+  /* ======================= 4. Состояние ======================= */
+
+  function initialState() {
+    return {
+      strategyId: 'direct',
+      difficulties: { easy: true, medium: true, hard: true },
+      priority: 'balanced',
+      history: [],
+      nextRunId: 1,
+      viewedRunId: null,
+      logTask: 'all',
+      compareA: null,
+      compareB: null,
+      scenario: null
+    };
+  }
+  let state = initialState();
+
+  function selectedTasks() { return TASKS.filter((t) => state.difficulties[t.difficulty]); }
+
+  function setLabelFor(d) {
+    if (d.easy && d.medium && d.hard) return 'весь набор (простые + средние + сложные)';
+    const names = DIFF_ORDER.filter((k) => d[k]).map((k) => DIFF[k].group.toLowerCase());
+    return names.length ? names.join(' + ') : 'ничего не выбрано';
+  }
+
+  function viewedRun() { return state.history.find((r) => r.id === state.viewedRunId) || null; }
+  function runById(id) { return state.history.find((r) => r.id === id) || null; }
+
+  function registerRun(run) {
+    run.id = state.nextRunId++;
+    run.setLabel = setLabelFor(state.difficulties);
+    state.history.unshift(run);
+    if (state.history.length > MAX_HISTORY) state.history.length = MAX_HISTORY;
+    state.viewedRunId = run.id;
+    state.logTask = 'all';
+    const earlier = state.history.slice(1);
+    const prev = earlier.find((r) => r.signature === run.signature) || earlier[0] || null;
+    state.compareB = run.id;
+    state.compareA = prev ? prev.id : null;
+    return run;
+  }
+
+  function isStale(run) {
+    return run.strategyId !== state.strategyId || run.signature !== signatureOf(selectedTasks());
+  }
+
+  /* ======================= 5. Форматирование ======================= */
+
+  const $ = (id) => document.getElementById(id);
+
+  function nf(n, d) {
+    return n.toLocaleString('ru-RU', { minimumFractionDigits: d, maximumFractionDigits: d });
+  }
+  function fmtInt(n) { return Number.isFinite(n) ? nf(n, 0) : '—'; }
+  function fmtCost(mu) { return Number.isFinite(mu) ? nf(mu / 1000, 3) + ' у.е.' : '—'; }
+  function fmtSec(ms) { return Number.isFinite(ms) ? nf(ms / 1000, 2) + ' с' : '—'; }
+  function fmtMs(ms) { return Number.isFinite(ms) ? nf(ms, 0) + ' мс' : '—'; }
+  function fmtPct(v) { return Number.isFinite(v) ? nf(v, 1) + ' %' : '—'; }
+  function signed(n, d) {
+    if (!Number.isFinite(n)) return '—';
+    if (Number(n.toFixed(d)) === 0) return nf(0, d);
+    return (n > 0 ? '+' : '−') + nf(Math.abs(n), d);
+  }
+  function relative(a, b) {
+    return Number.isFinite(a) && Number.isFinite(b) && a > 0 ? (b - a) / a * 100 : null;
+  }
+  function plural(n, one, few, many) {
+    const a = Math.abs(n) % 100;
+    const b = a % 10;
+    if (a > 10 && a < 20) return many;
+    if (b === 1) return one;
+    if (b >= 2 && b <= 4) return few;
+    return many;
+  }
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, (c) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+  function share(part, whole) { return whole > 0 ? part / whole * 100 : null; }
+
+  function banner(kind, html) { return '<div class="banner banner-' + kind + '">' + html + '</div>'; }
+  function emptyState(html) { return '<div class="empty-state">' + html + '</div>'; }
+  function tableWrap(inner, label) {
+    return '<div class="table-wrap" tabindex="0" role="region" aria-label="' + esc(label) + '">' + inner + '</div>';
+  }
+  function diffBadge(d) { return '<span class="badge diff-' + d + '">' + DIFF[d].label + '</span>'; }
+  function typeBadge(t) { return '<span class="badge tag-' + t + '">' + RULES.types[t].label + '</span>'; }
+  function outcomeBadge(code, label) {
+    const icon = code === 'failed' ? '✗ ' : '✓ ';
+    const cls = code === 'solved' ? 'out-solved' : code === 'fixed' ? 'out-fixed' : 'out-failed';
+    return '<span class="badge ' + cls + '">' + icon + esc(label) + '</span>';
+  }
+  const AFTER_LABEL = {
+    'correct': '✓ верен',
+    'wrong-fixable': '✗ неверен (исправим)',
+    'wrong-unfixable': '✗ неверен (неисправим)'
+  };
+
+  function runLabel(r) {
+    return '№' + r.id + ' · ' + STRATEGIES[r.strategyId].name + ' · ' + r.setLabel +
+      ' (' + r.metrics.total + ' ' + plural(r.metrics.total, 'задача', 'задачи', 'задач') + ')';
+  }
+
+  function setStatus(msg, kind) {
+    const el = $('status');
+    el.textContent = msg;
+    el.className = 'status' + (kind ? ' is-' + kind : '');
+  }
+
+  /* ======================= 6. Отрисовка ======================= */
+
+  function renderSelection() {
+    DIFF_ORDER.forEach((k) => {
+      const n = TASKS.filter((t) => t.difficulty === k).length;
+      $('count-' + k).textContent = '(' + n + ' ' + plural(n, 'задача', 'задачи', 'задач') + ')';
+    });
+    const n = selectedTasks().length;
+    const el = $('selection-info');
+    if (n === 0) {
+      el.textContent = 'Не выбрано ни одной задачи. Отметьте хотя бы один уровень сложности.';
+      el.className = 'selection-info is-error';
+    } else {
+      el.textContent = 'Выбрано задач: ' + n + ' из ' + TASKS.length + '.';
+      el.className = 'selection-info';
+    }
+  }
+
+  function consistency(run) {
+    const m = run.metrics;
+    const rows = { steps: 0, cost: 0, latency: 0, solved: 0 };
+    run.results.forEach((r) => {
+      rows.steps += r.stepCount; rows.cost += r.cost; rows.latency += r.latency;
+      if (r.success) rows.solved += 1;
+    });
+    const log = { steps: run.steps.length, cost: 0, latency: 0 };
+    run.steps.forEach((s) => { log.cost += s.cost; log.latency += s.latency; });
+    const ok = rows.steps === m.steps && log.steps === m.steps &&
+      rows.cost === m.cost && log.cost === m.cost &&
+      rows.latency === m.latency && log.latency === m.latency &&
+      rows.solved === m.solved;
+    return { ok: ok, rows: rows, log: log };
+  }
+
+  function runConclusion(run) {
+    const m = run.metrics;
+    const s = STRATEGIES[run.strategyId];
+    const bt = m.byType;
+    const parts = [];
+    parts.push('«' + esc(s.name) + '»: решено ' + m.solved + ' из ' + m.total + ' (' + fmtPct(m.successRate) +
+      ') за ' + m.steps + ' ' + plural(m.steps, 'шаг', 'шага', 'шагов') + ', ' + fmtCost(m.cost) + ', ' + fmtSec(m.latency) + '.');
+
+    if (s.usePlan || s.useVerify) {
+      const extraCost = bt.plan.cost + bt.verify.cost + bt.fix.cost;
+      const extraLat = bt.plan.latency + bt.verify.latency + bt.fix.latency;
+      parts.push('Планирование, проверка и исправления дали ' + fmtPct(share(extraCost, m.cost)) +
+        ' стоимости и ' + fmtPct(share(extraLat, m.latency)) + ' задержки запуска.');
+    }
+    if (s.usePlan) {
+      const useless = new Set(run.results.filter((r) => r.directOk && r.plannedOk).map((r) => r.taskId));
+      const planSteps = run.steps.filter((x) => x.type === 'plan' && useless.has(x.taskId));
+      if (planSteps.length > 0) {
+        const c = planSteps.reduce((t, x) => t + x.cost, 0);
+        parts.push('В ' + planSteps.length + ' ' + plural(planSteps.length, 'задаче', 'задачах', 'задачах') +
+          ' прямой ответ уже был верным: планирование стоило там ' + fmtCost(c) + ' и не изменило исход.');
+      }
+    }
+    if (s.useVerify) {
+      const confirms = run.steps.filter((x) => x.type === 'verify' && x.after === 'correct');
+      if (confirms.length > 0) {
+        const c = confirms.reduce((t, x) => t + x.cost, 0);
+        parts.push('Проверка лишь подтвердила верные ответы в ' + confirms.length + ' ' +
+          plural(confirms.length, 'задаче', 'задачах', 'задачах') + ' (' + fmtCost(c) + ') — исход не изменился.');
+      }
+      const fixes = run.results.filter((r) => r.code === 'fixed').length;
+      if (fixes > 0) {
+        parts.push('Проверка нашла и исправила ошибок: ' + fixes + ' (шагов исправления: ' + bt.fix.count +
+          ', ' + fmtCost(bt.fix.cost) + ').');
+      }
+    }
+    if (m.failed > 0) {
+      const unf = run.results.filter((r) => !r.success && r.finalKind === 'unfixable').length;
+      const fx = run.results.filter((r) => !r.success && r.finalKind === 'fixable').length;
+      const bits = [];
+      if (unf) bits.push(unf + ' — ошибки, которые проверка не исправляет (не хватает данных или инструментов)');
+      if (fx) bits.push(fx + ' — исправимы проверкой, но в этом запуске её нет');
+      parts.push('Не решено: ' + m.failed + (bits.length ? ' (' + bits.join('; ') + ')' : '') + '.');
+    } else {
+      parts.push('Все выбранные задачи решены — теперь оцените, сколько это стоило.');
+    }
+    parts.push('Вывод относится только к выбранному набору задач. Чтобы понять, окупаются ли дополнительные операции, ' +
+      'сравните этот запуск с другой стратегией на том же наборе.');
+    return parts;
+  }
+
+  function metricCard(title, value, sub, formula) {
+    return '<div class="metric"><h3>' + title + '</h3><p class="metric-value">' + value +
+      '</p><p class="metric-sub">' + sub + '</p><p class="metric-formula">' + formula + '</p></div>';
+  }
+
+  function renderResults() {
+    const body = $('results-body');
+    const run = viewedRun();
+    const tasks = selectedTasks();
+    if (!run) {
+      if (tasks.length === 0) {
+        body.innerHTML = emptyState('<p><strong>Не выбрано ни одной задачи.</strong></p>' +
+          '<p>Отметьте хотя бы один уровень сложности (или нажмите «Выбрать весь набор»), затем запустите симуляцию.</p>');
+      } else {
+        body.innerHTML = emptyState('<p><strong>Результатов пока нет.</strong></p>' +
+          '<p>Выберите стратегию и набор задач (сейчас выбрано задач: ' + tasks.length +
+          '), затем нажмите «Запустить симуляцию». Здесь появятся метрики, таблица по задачам и вывод.</p>');
+      }
+      return;
+    }
+
+    const m = run.metrics;
+    const s = STRATEGIES[run.strategyId];
+    const stale = isStale(run);
+    const bt = m.byType;
+    let html = '';
+
+    html += '<p class="run-context">Показан запуск <strong>№' + run.id + '</strong>: стратегия «' + esc(s.name) +
+      '», набор — ' + esc(run.setLabel) + ' (' + m.total + ' ' + plural(m.total, 'задача', 'задачи', 'задач') +
+      '). Контрольная сумма журнала: <code>' + run.fingerprint + '</code>.</p>';
+
+    if (stale) {
+      const cur = tasks.length === 0
+        ? 'сейчас не выбрано ни одной задачи'
+        : 'сейчас выбрано: стратегия «' + esc(STRATEGIES[state.strategyId].name) + '», задач — ' + tasks.length;
+      html += banner('warn', '<strong>Параметры изменены после запуска.</strong> Ниже — результат запуска №' + run.id +
+        ' (стратегия «' + esc(s.name) + '», набор — ' + esc(run.setLabel) + '); он не относится к текущему выбору (' + cur +
+        '). Нажмите «Запустить симуляцию», чтобы получить новый результат.');
+    }
+
+    html += '<div class="' + (stale ? 'stale-wrap' : '') + '">';
+
+    html += '<div class="metrics">' +
+      metricCard('Успешность', fmtPct(m.successRate), 'решено ' + m.solved + ' из ' + m.total,
+        m.solved + ' / ' + m.total + ' × 100 %') +
+      metricCard('Общая стоимость', fmtCost(m.cost), 'сумма стоимости ' + m.steps + ' ' +
+        plural(m.steps, 'шага', 'шагов', 'шагов'), 'Σ стоимость шагов журнала') +
+      metricCard('Общая задержка', fmtSec(m.latency), fmtMs(m.latency), 'Σ длительность шагов журнала') +
+      metricCard('Количество шагов', fmtInt(m.steps),
+        'план ' + bt.plan.count + ', ответ ' + bt.answer.count + ', проверка ' + bt.verify.count +
+        ', исправление ' + bt.fix.count, 'число строк журнала') +
+      '</div>';
+
+    html += '<p class="averages"><strong>Дополнительно, в среднем на задачу:</strong> стоимость ' + fmtCost(m.avgCost) +
+      ', задержка ' + fmtSec(m.avgLatency) + ', шагов ' + (m.avgSteps === null ? '—' : nf(m.avgSteps, 2)) +
+      '. Средние не заменяют общие показатели выше.</p>';
+
+    html += '<div class="conclusion" aria-labelledby="concl-title"><h3 id="concl-title">Вывод по запуску</h3>' +
+      runConclusion(run).map((p) => '<p>' + p + '</p>').join('') + '</div>';
+
+    // Таблица по задачам
+    let rowsHtml = '';
+    const sum = { steps: 0, cost: 0, latency: 0, solved: 0 };
+    run.results.forEach((r) => {
+      sum.steps += r.stepCount; sum.cost += r.cost; sum.latency += r.latency;
+      if (r.success) sum.solved += 1;
+      rowsHtml += '<tr>' +
+        '<td><strong>' + esc(r.title) + '</strong><br><span class="small">' + esc(r.prompt) + '</span></td>' +
+        '<td>' + diffBadge(r.difficulty) + '</td>' +
+        '<td>' + outcomeBadge(r.code, r.label) + '<div class="small">' + esc(r.detail) + '</div></td>' +
+        '<td class="num">' + r.stepCount + '</td>' +
+        '<td class="num">' + fmtCost(r.cost) + '</td>' +
+        '<td class="num">' + fmtMs(r.latency) + '</td>' +
+        '<td><button type="button" class="btn btn-secondary btn-small" data-action="task-log" data-task="' + r.taskId +
+        '" aria-label="Показать шаги задачи: ' + esc(r.title) + '">Шаги</button></td></tr>';
+    });
+    const table = '<table class="data-table"><caption class="small" style="text-align:left;padding:6px 10px">Результаты по задачам</caption>' +
+      '<thead><tr><th scope="col">Задача</th><th scope="col">Сложность</th><th scope="col">Исход</th>' +
+      '<th scope="col" class="num">Шагов</th><th scope="col" class="num">Стоимость</th><th scope="col" class="num">Задержка</th>' +
+      '<th scope="col">Журнал</th></tr></thead><tbody>' + rowsHtml + '</tbody>' +
+      '<tfoot><tr><th scope="row" colspan="2">Итого по строкам</th><td>решено ' + sum.solved + ' из ' + run.results.length +
+      '</td><td class="num">' + sum.steps + '</td><td class="num">' + fmtCost(sum.cost) + '</td><td class="num">' +
+      fmtMs(sum.latency) + '</td><td></td></tr></tfoot></table>';
+    html += tableWrap(table, 'Таблица результатов по задачам');
+
+    const c = consistency(run);
+    html += c.ok
+      ? banner('ok', '✓ Сверка выполнена: суммы по строкам таблицы и по журналу совпадают с карточками (шагов — ' + c.rows.steps +
+        ', стоимость — ' + fmtCost(c.rows.cost) + ', задержка — ' + fmtMs(c.rows.latency) + ', решено — ' + c.rows.solved + ').')
+      : banner('bad', '✗ Сверка не прошла: суммы по таблице, журналу и карточкам расходятся.');
+
+    html += '</div>';
+    body.innerHTML = html;
+  }
+
+  function renderLog() {
+    const run = viewedRun();
+    const sel = $('log-filter');
+    const body = $('log-body');
+    if (!run) {
+      sel.innerHTML = '<option value="all">Все задачи</option>';
+      sel.disabled = true;
+      body.innerHTML = emptyState('<p>Журнал появится после первого запуска симуляции.</p>');
+      return;
+    }
+    sel.disabled = false;
+    if (state.logTask !== 'all' && !run.results.some((r) => r.taskId === state.logTask)) state.logTask = 'all';
+    sel.innerHTML = '<option value="all">Все задачи (' + run.results.length + ')</option>' +
+      run.results.map((r) => '<option value="' + r.taskId + '">' + esc(r.title) + ' (' + r.taskId + ')</option>').join('');
+    sel.value = state.logTask;
+
+    const steps = state.logTask === 'all' ? run.steps : run.steps.filter((x) => x.taskId === state.logTask);
+    const tot = steps.reduce((a, x) => ({ cost: a.cost + x.cost, latency: a.latency + x.latency }), { cost: 0, latency: 0 });
+    const s = STRATEGIES[run.strategyId];
+    let html = '<p class="run-context">Журнал запуска <strong>№' + run.id + '</strong> — «' + esc(s.name) + '», набор: ' +
+      esc(run.setLabel) + '. Показано шагов: ' + steps.length + ' из ' + run.steps.length + '.</p>';
+    if (isStale(run)) {
+      html += banner('warn', 'Журнал относится к запуску №' + run.id + ', а не к текущим параметрам. Запустите симуляцию заново.');
+    }
+
+    // вклад типов шагов
+    let typeRows = '';
+    STEP_ORDER.forEach((t) => {
+      const sub = steps.filter((x) => x.type === t);
+      if (!sub.length) return;
+      const cst = sub.reduce((a, x) => a + x.cost, 0);
+      const lat = sub.reduce((a, x) => a + x.latency, 0);
+      typeRows += '<tr><td>' + typeBadge(t) + '</td><td class="num">' + sub.length + '</td><td class="num">' + fmtCost(cst) +
+        '</td><td class="num">' + fmtPct(share(cst, tot.cost)) + '</td><td class="num">' + fmtMs(lat) +
+        '</td><td class="num">' + fmtPct(share(lat, tot.latency)) + '</td></tr>';
+    });
+    html += '<h3>Вклад типов шагов в метрики</h3>' + tableWrap(
+      '<table class="data-table"><thead><tr><th scope="col">Тип шага</th><th scope="col" class="num">Шагов</th>' +
+      '<th scope="col" class="num">Стоимость</th><th scope="col" class="num">Доля стоимости</th>' +
+      '<th scope="col" class="num">Задержка</th><th scope="col" class="num">Доля задержки</th></tr></thead><tbody>' +
+      typeRows + '</tbody><tfoot><tr><th scope="row">Итого</th><td class="num">' + steps.length + '</td><td class="num">' +
+      fmtCost(tot.cost) + '</td><td class="num">' + (steps.length ? '100,0 %' : '—') + '</td><td class="num">' +
+      fmtMs(tot.latency) + '</td><td class="num">' + (steps.length ? '100,0 %' : '—') + '</td></tr></tfoot></table>',
+      'Вклад типов шагов');
+
+    html += '<h3>Шаги по задачам</h3><p class="hint">Раскройте задачу, чтобы увидеть её операции. Сводная таблица выше сохраняет итог по всему запуску.</p>';
+    const groups = state.logTask === 'all'
+      ? run.results
+      : run.results.filter((r) => r.taskId === state.logTask);
+    groups.forEach((result) => {
+      const taskSteps = run.steps.filter((x) => x.taskId === result.taskId);
+      let rows = '';
+      taskSteps.forEach((x) => {
+        rows += '<tr><td class="num">' + x.n + '</td><td>' + typeBadge(x.type) + '</td>' +
+          '<td class="num">' + fmtInt(x.tokensIn) + ' → ' + fmtInt(x.tokensOut) + '</td>' +
+          '<td class="num">' + fmtCost(x.cost) + '</td><td class="num">' + fmtMs(x.latency) + '</td>' +
+          '<td>' + (x.after ? AFTER_LABEL[x.after] : '—') + '</td><td>' + esc(x.note) + '</td></tr>';
+      });
+      const opened = state.logTask === 'all' ? '' : ' open';
+      html += '<details class="log-group"' + opened + '><summary>' +
+        '<span class="log-group-title"><strong>' + esc(result.title) + '</strong><span class="small">' + result.taskId + ' · ' +
+        outcomeBadge(result.code, result.label) + '</span></span>' +
+        '<span class="log-group-metrics">' + result.stepCount + ' ' + plural(result.stepCount, 'шаг', 'шага', 'шагов') +
+        ' · ' + fmtCost(result.cost) + ' · ' + fmtMs(result.latency) + '</span></summary>' +
+        tableWrap('<table class="data-table log-table"><thead><tr><th scope="col" class="num">№</th><th scope="col">Шаг</th>' +
+        '<th scope="col" class="num">Токены вх → исх</th><th scope="col" class="num">Стоимость</th>' +
+        '<th scope="col" class="num">Задержка</th><th scope="col">Ответ после шага</th><th scope="col">Что произошло</th></tr></thead><tbody>' +
+        rows + '</tbody><tfoot><tr><th scope="row" colspan="3">Итого по задаче (' + taskSteps.length + ')</th><td class="num">' +
+        fmtCost(result.cost) + '</td><td class="num">' + fmtMs(result.latency) + '</td><td colspan="2"></td></tr></tfoot></table>',
+        'Шаги задачи ' + result.title) + '</details>';
+    });
+    if (state.logTask === 'all') {
+      html += '<p class="hint">Суммы всех раскрытых групп и сводной таблицы совпадают с карточками метрик запуска №' + run.id + '.</p>';
+    }
+    body.innerHTML = html;
+  }
+
+  function renderHistory() {
+    const body = $('history-body');
+    const hist = state.history;
+    if (!hist.length) {
+      body.innerHTML = emptyState('<p>Запусков пока нет.</p>');
+      return;
+    }
+    let rows = '';
+    hist.forEach((r, i) => {
+      const older = hist.slice(i + 1).find((o) => o.strategyId === r.strategyId && o.signature === r.signature);
+      const same = older
+        ? '<div class="small">' + (older.fingerprint === r.fingerprint ? '= результат запуска №' + older.id + ' (воспроизводится)' : '≠ запуска №' + older.id) + '</div>'
+        : '';
+      const viewed = r.id === state.viewedRunId;
+      rows += '<tr' + (viewed ? ' class="is-viewed"' : '') + '><td class="num">№' + r.id + '</td><td>' + esc(STRATEGIES[r.strategyId].name) +
+        '</td><td>' + esc(r.setLabel) + '</td><td class="num">' + r.metrics.total + '</td><td class="num">' + fmtPct(r.metrics.successRate) +
+        '</td><td class="num">' + r.metrics.steps + '</td><td class="num">' + fmtCost(r.metrics.cost) + '</td><td class="num">' +
+        fmtSec(r.metrics.latency) + '</td><td><code>' + r.fingerprint + '</code>' + same + '</td><td>' +
+        (viewed ? '<span class="badge out-fixed">Открыт</span>'
+          : '<button type="button" class="btn btn-secondary btn-small" data-action="view-run" data-run="' + r.id +
+            '" aria-label="Открыть запуск №' + r.id + '">Открыть</button>') + '</td></tr>';
+    });
+    body.innerHTML = tableWrap('<table class="data-table" style="min-width:820px"><thead><tr><th scope="col" class="num">Запуск</th>' +
+      '<th scope="col">Стратегия</th><th scope="col">Набор</th><th scope="col" class="num">Задач</th>' +
+      '<th scope="col" class="num">Успешность</th><th scope="col" class="num">Шагов</th><th scope="col" class="num">Стоимость</th>' +
+      '<th scope="col" class="num">Задержка</th><th scope="col">Сумма журнала</th><th scope="col">Действие</th></tr></thead><tbody>' +
+      rows + '</tbody></table>', 'История запусков');
+  }
+
+  const DIR = {
+    quality: { up: ['▲', 'Выше — полезный эффект', 'gain'], down: ['▼', 'Ниже — качество хуже', 'loss'] },
+    cost:    { up: ['▲', 'Больше — плата за дополнительные операции', 'pay'], down: ['▼', 'Меньше — экономия', 'gain'] },
+    latency: { up: ['▲', 'Дольше — ожидание выросло', 'pay'], down: ['▼', 'Быстрее — ожидание сократилось', 'gain'] },
+    steps:   { up: ['▲', 'Больше шагов — длиннее цепочка действий', 'pay'], down: ['▼', 'Меньше шагов — короче цепочка', 'gain'] }
+  };
+  function dirCell(kind, delta) {
+    let d;
+    if (!Number.isFinite(delta) || delta === 0) d = ['■', 'Без изменений', 'neutral'];
+    else d = delta > 0 ? DIR[kind].up : DIR[kind].down;
+    return '<span class="dir dir-' + d[2] + '"><span aria-hidden="true">' + d[0] + '</span> ' + d[1] + '</span>';
+  }
+
+  function compareConclusion(A, B) {
+    const dS = B.metrics.solved - A.metrics.solved;
+    const dC = B.metrics.cost - A.metrics.cost;
+    const dL = B.metrics.latency - A.metrics.latency;
+    const dN = B.metrics.steps - A.metrics.steps;
+    const parts = [];
+    parts.push('Изменения B относительно A: решено задач ' + signed(dS, 0) + ', стоимость ' + signed(dC / 1000, 3) +
+      ' у.е., задержка ' + signed(dL / 1000, 2) + ' с, шагов ' + signed(dN, 0) + '.');
+    if (dS > 0 && dC > 0) {
+      parts.push('Качество выросло за счёт дополнительных операций: одна дополнительно решённая задача обошлась примерно в ' +
+        fmtCost(dC / dS) + ' и ' + fmtSec(dL / dS) + ' модельного времени.');
+    } else if (dS > 0) {
+      parts.push('Успешность выросла без роста стоимости — на этом наборе B выгоднее по обеим осям.');
+    } else if (dS === 0 && dC > 0) {
+      parts.push('Число решённых задач не изменилось, а затраты выросли: дополнительные операции на этом наборе не окупились.');
+    } else if (dS === 0 && dC < 0) {
+      parts.push('Решено столько же задач при меньших затратах — B экономичнее.');
+    } else if (dS === 0) {
+      parts.push('По основным показателям запуски совпадают.');
+    } else if (dC < 0) {
+      parts.push('B дешевле, но решает меньше задач: это обмен качества на экономию.');
+    } else {
+      parts.push('B решает меньше задач и не дешевле — выигрыша нет.');
+    }
+    if (state.priority === 'quality') {
+      parts.push(dS > 0
+        ? 'При приоритете успешности такое улучшение, скорее всего, оправдано.'
+        : 'При приоритете успешности B не даёт преимущества на этом наборе.');
+    } else if (state.priority === 'economy') {
+      if (dC > 0) parts.push('При приоритете экономии рост затрат — серьёзный минус; он оправдан, только если ошибки в вашем сценарии дороже.');
+      else if (dS < 0) parts.push('При приоритете экономии B подходит по затратам, но цена — потеря качества; оцените, допустимы ли такие ошибки.');
+      else parts.push('При приоритете экономии B подходит: затраты не выросли, качество не упало.');
+    } else {
+      parts.push('При сбалансированном приоритете сопоставьте цену дополнительной решённой задачи с ценой ошибки в вашем сценарии.');
+    }
+    parts.push('Вывод справедлив только для этого набора задач и правил симуляции.');
+    return parts;
+  }
+
+  function renderCompare() {
+    const hist = state.history;
+    const a = $('cmp-a');
+    const b = $('cmp-b');
+    const body = $('compare-body');
+    if (hist.length < 2) {
+      a.disabled = true; b.disabled = true;
+      a.innerHTML = '<option>—</option>'; b.innerHTML = '<option>—</option>';
+      body.innerHTML = emptyState(hist.length === 0
+        ? '<p><strong>Для сравнения нужны минимум два запуска.</strong></p><p>Запустите одну стратегию, затем смените стратегию и запустите снова на том же наборе задач.</p>'
+        : '<p><strong>Сохранён только один запуск (№' + hist[0].id + ').</strong></p><p>Смените стратегию и запустите симуляцию на том же наборе задач — тогда появится сравнение.</p>');
+      return;
+    }
+    a.disabled = false; b.disabled = false;
+    if (!runById(state.compareB)) state.compareB = hist[0].id;
+    if (!runById(state.compareA)) state.compareA = (hist.find((r) => r.id !== state.compareB) || hist[1]).id;
+    const opts = (selId) => hist.map((r) => '<option value="' + r.id + '"' + (r.id === selId ? ' selected' : '') + '>' + esc(runLabel(r)) + '</option>').join('');
+    a.innerHTML = opts(state.compareA);
+    b.innerHTML = opts(state.compareB);
+
+    const A = runById(state.compareA);
+    const B = runById(state.compareB);
+    if (A.id === B.id) {
+      body.innerHTML = banner('warn', 'Выбран один и тот же запуск. Выберите два разных запуска, чтобы увидеть разницу.');
+      return;
+    }
+    const same = A.signature === B.signature;
+    let html = '<p class="run-context"><strong>A:</strong> ' + esc(runLabel(A)) + '<br><strong>B:</strong> ' + esc(runLabel(B)) + '</p>';
+    if (same) {
+      html += banner('ok', '✓ Набор задач одинаковый: ' + A.metrics.total + ' ' + plural(A.metrics.total, 'задача', 'задачи', 'задач') +
+        ' (' + esc(A.setLabel) + '). Прямое сравнение корректно.');
+    } else {
+      html += banner('warn', '⚠ Наборы задач различаются: в A — ' + A.metrics.total + ' (' + esc(A.setLabel) + '), в B — ' + B.metrics.total +
+        ' (' + esc(B.setLabel) + '). Прямое сравнение сумм некорректно, поэтому разница не вычисляется. ' +
+        'Запустите обе стратегии на одном наборе задач.');
+    }
+
+    const mA = A.metrics;
+    const mB = B.metrics;
+    const defs = [
+      { label: 'Успешность', a: mA.successRate, b: mB.successRate, f: fmtPct, abs: (d) => signed(d, 1) + ' п.п.', kind: 'quality' },
+      { label: 'Решено задач', a: mA.solved, b: mB.solved, f: fmtInt, abs: (d) => signed(d, 0), kind: 'quality' },
+      { label: 'Общая стоимость', a: mA.cost, b: mB.cost, f: fmtCost, abs: (d) => signed(d / 1000, 3) + ' у.е.', kind: 'cost' },
+      { label: 'Общая задержка', a: mA.latency, b: mB.latency, f: fmtSec, abs: (d) => signed(d / 1000, 2) + ' с (' + signed(d, 0) + ' мс)', kind: 'latency' },
+      { label: 'Количество шагов', a: mA.steps, b: mB.steps, f: fmtInt, abs: (d) => signed(d, 0), kind: 'steps' }
+    ];
+    if (same) {
+      html += '<div class="compare-kpis" role="group" aria-label="Наглядное сравнение четырёх основных метрик">';
+      defs.filter((d) => d.label !== 'Решено задач').forEach((d) => {
+        const delta = d.b - d.a;
+        const max = Math.max(d.a, d.b, 1);
+        const widthA = Math.max(0, Math.min(100, d.a / max * 100)).toFixed(2);
+        const widthB = Math.max(0, Math.min(100, d.b / max * 100)).toFixed(2);
+        html += '<article class="compare-kpi"><h3>' + d.label + '</h3>' +
+          '<div class="compare-bar-row"><span class="compare-bar-label">A</span><span class="compare-track" aria-hidden="true">' +
+          '<span class="compare-bar compare-bar-a" style="width:' + widthA + '%"></span></span><strong>' + d.f(d.a) + '</strong></div>' +
+          '<div class="compare-bar-row"><span class="compare-bar-label">B</span><span class="compare-track" aria-hidden="true">' +
+          '<span class="compare-bar compare-bar-b" style="width:' + widthB + '%"></span></span><strong>' + d.f(d.b) + '</strong></div>' +
+          '<div class="compare-kpi-delta"><strong>Δ ' + d.abs(delta) + '</strong>' + dirCell(d.kind, delta) + '</div></article>';
+      });
+      html += '</div>';
+    }
+    let rows = '';
+    defs.forEach((d) => {
+      const delta = d.b - d.a;
+      const rel = relative(d.a, d.b);
+      if (same) {
+        rows += '<tr><th scope="row">' + d.label + '</th><td class="num">' + d.f(d.a) + '</td><td class="num">' + d.f(d.b) +
+          '</td><td class="num">' + d.abs(delta) + '</td><td class="num">' + (rel === null ? '—' : signed(rel, 1) + ' %') +
+          '</td><td>' + dirCell(d.kind, delta) + '</td></tr>';
+      } else {
+        rows += '<tr><th scope="row">' + d.label + '</th><td class="num">' + d.f(d.a) + '</td><td class="num">' + d.f(d.b) +
+          '</td><td colspan="3">не вычисляется: наборы задач разные</td></tr>';
+      }
+    });
+    html += tableWrap('<table class="data-table"><thead><tr><th scope="col">Метрика</th><th scope="col" class="num">A</th>' +
+      '<th scope="col" class="num">B</th><th scope="col" class="num">Изменение (B − A)</th><th scope="col" class="num">Отн. изменение</th>' +
+      '<th scope="col">Что это значит</th></tr></thead><tbody>' + rows + '</tbody></table>', 'Сравнение метрик запусков');
+
+    if (same) {
+      html += '<div class="conclusion"><h3>Вывод по сравнению</h3>' +
+        compareConclusion(A, B).map((p) => '<p>' + p + '</p>').join('') + '</div>';
+
+      // Откуда разница: по типам шагов
+      let trows = '';
+      const tot = { n: 0, c: 0, l: 0 };
+      STEP_ORDER.forEach((t) => {
+        const x = mA.byType[t];
+        const y = mB.byType[t];
+        if (!x.count && !y.count) return;
+        const dn = y.count - x.count;
+        const dc = y.cost - x.cost;
+        const dl = y.latency - x.latency;
+        tot.n += dn; tot.c += dc; tot.l += dl;
+        trows += '<tr><td>' + typeBadge(t) + '</td><td class="num">' + x.count + '</td><td class="num">' + y.count + '</td><td class="num">' +
+          signed(dn, 0) + '</td><td class="num">' + signed(dc / 1000, 3) + ' у.е.</td><td class="num">' + signed(dl, 0) + ' мс</td></tr>';
+      });
+      html += '<h3>Откуда разница: по типам шагов журнала</h3>' + tableWrap(
+        '<table class="data-table"><thead><tr><th scope="col">Тип шага</th><th scope="col" class="num">Шагов в A</th>' +
+        '<th scope="col" class="num">Шагов в B</th><th scope="col" class="num">Δ шагов</th><th scope="col" class="num">Δ стоимость</th>' +
+        '<th scope="col" class="num">Δ задержка</th></tr></thead><tbody>' + trows + '</tbody><tfoot><tr><th scope="row" colspan="3">Сумма по типам</th>' +
+        '<td class="num">' + signed(tot.n, 0) + '</td><td class="num">' + signed(tot.c / 1000, 3) + ' у.е.</td><td class="num">' +
+        signed(tot.l, 0) + ' мс</td></tr></tfoot></table>', 'Разница по типам шагов');
+      const okSum = tot.n === mB.steps - mA.steps && tot.c === mB.cost - mA.cost && tot.l === mB.latency - mA.latency;
+      html += okSum
+        ? banner('ok', '✓ Сумма разниц по типам шагов равна разнице итоговых метрик.')
+        : banner('bad', '✗ Сумма разниц по типам шагов не совпала с разницей итоговых метрик.');
+
+      // По задачам
+      let prow = '';
+      const ps = { s: 0, c: 0, l: 0 };
+      A.results.forEach((ra, i) => {
+        const rb = B.results[i];
+        const ds = rb.stepCount - ra.stepCount;
+        const dc = rb.cost - ra.cost;
+        const dl = rb.latency - ra.latency;
+        ps.s += ds; ps.c += dc; ps.l += dl;
+        let change = 'Исход не изменился';
+        if (!ra.success && rb.success) change = '▲ Теперь решена';
+        else if (ra.success && !rb.success) change = '▼ Перестала решаться';
+        prow += '<tr><td>' + esc(ra.title) + '</td><td>' + outcomeBadge(ra.code, ra.label) + '</td><td>' + outcomeBadge(rb.code, rb.label) +
+          '</td><td>' + change + '</td><td class="num">' + signed(ds, 0) + '</td><td class="num">' + signed(dc / 1000, 3) +
+          ' у.е.</td><td class="num">' + signed(dl, 0) + ' мс</td></tr>';
+      });
+      html += '<h3>Сравнение по задачам</h3>' + tableWrap(
+        '<table class="data-table" style="min-width:860px"><thead><tr><th scope="col">Задача</th><th scope="col">Исход в A</th>' +
+        '<th scope="col">Исход в B</th><th scope="col">Изменение</th><th scope="col" class="num">Δ шагов</th>' +
+        '<th scope="col" class="num">Δ стоимость</th><th scope="col" class="num">Δ задержка</th></tr></thead><tbody>' + prow +
+        '</tbody><tfoot><tr><th scope="row" colspan="4">Итого</th><td class="num">' + signed(ps.s, 0) + '</td><td class="num">' +
+        signed(ps.c / 1000, 3) + ' у.е.</td><td class="num">' + signed(ps.l, 0) + ' мс</td></tr></tfoot></table>', 'Сравнение по задачам');
+    }
+    body.innerHTML = html;
+  }
+
+  function renderScenario() {
+    const body = $('scenario-body');
+    const sc = state.scenario;
+    if (!sc) { body.innerHTML = ''; return; }
+    let html = '<h3>Результат автоматической проверки</h3>' +
+      (sc.allOk ? banner('ok', '✓ Все проверки сценария пройдены (запуски №' + sc.runIds[0] + ' и №' + sc.runIds[1] + ' сохранены в истории и сравнении).')
+        : banner('bad', '✗ Часть проверок не пройдена — см. список ниже.'));
+    html += '<ul class="check-list">' + sc.checks.map((c) =>
+      '<li class="' + (c.ok ? 'is-ok' : 'is-fail') + '"><strong>' + (c.ok ? '✓ ' : '✗ ') + esc(c.title) + '</strong><br>' + c.detail + '</li>').join('') + '</ul>';
+    body.innerHTML = html;
+  }
+
+  function renderRules() {
+    const p = RULES.price;
+    const typeRows = STEP_ORDER.map((t) => {
+      const r = RULES.types[t];
+      return '<tr><td>' + typeBadge(t) + '</td><td class="num">' + r.baseMs + ' мс</td><td>' + r.outBase + ' + ' + r.outPerC + ' × c</td><td>' + esc(r.input) + '</td></tr>';
+    }).join('');
+    const stratRows = STRATEGY_ORDER.map((k) => '<tr><td><strong>' + esc(STRATEGIES[k].name) + '</strong></td><td>' + esc(STRATEGIES[k].chain) + '</td></tr>').join('');
+    const outLabel = (o) => o.ok ? 'верно' : (o.kind === 'fixable' ? 'ошибка, исправима проверкой: ' : 'ошибка, проверка не исправит: ') + (o.issue || '');
+    const taskRows = TASKS.map((t) => '<tr><td>' + t.id + '</td><td><strong>' + esc(t.title) + '</strong><br><span class="small">' + esc(t.prompt) + '</span></td><td>' +
+      diffBadge(t.difficulty) + '</td><td class="num">' + t.complexity + '</td><td class="num">' + t.ctx + '</td><td>' + esc(outLabel(t.direct)) + '</td><td>' + esc(outLabel(t.planned)) + '</td></tr>').join('');
+
+    $('rules-body').innerHTML =
+      '<h3>Метрики</h3><ul>' +
+      '<li><strong>Успешность</strong> = решённые задачи / все выбранные задачи × 100 %. Задача решена, если после последнего шага ответ верен.</li>' +
+      '<li><strong>Общая стоимость</strong> = сумма стоимости всех шагов журнала.</li>' +
+      '<li><strong>Общая задержка</strong> = сумма длительностей всех шагов журнала (модельное время, шаги выполняются последовательно).</li>' +
+      '<li><strong>Количество шагов</strong> = число строк журнала по всем задачам.</li></ul>' +
+      '<h3>Формулы шага</h3>' +
+      '<p class="formula">выходные токены = база(тип) + коэффициент(тип) × c, где c — сложность задачи (1–5)</p>' +
+      '<p class="formula">стоимость (у.е.) = ' + nf(p.perCall / 1000, 3) + ' (за вызов) + входные токены × ' + nf(p.perInputToken / 1000, 3) +
+      ' + выходные токены × ' + nf(p.perOutputToken / 1000, 3) + ' (то есть ' + nf(p.perInputToken, 0) + ' и ' + nf(p.perOutputToken, 0) +
+      ' у.е. за 1000 входных и выходных токенов)</p>' +
+      '<p class="formula">задержка (мс) = базовая(тип) + округл(входные токены / ' + RULES.msInputTokensPerMs + ') + выходные токены × ' + RULES.msPerOutputToken + '</p>' +
+      '<p class="small">Деньги считаются в целых тысячных долях у.е., поэтому суммы по строкам и журналу совпадают точно. ctx — число входных токенов условия задачи.</p>' +
+      tableWrap('<table class="data-table"><thead><tr><th scope="col">Тип шага</th><th scope="col" class="num">Базовая задержка</th>' +
+        '<th scope="col">Выходные токены</th><th scope="col">Входные токены</th></tr></thead><tbody>' + typeRows + '</tbody></table>', 'Коэффициенты типов шагов') +
+      '<h3>Стратегии</h3>' + tableWrap('<table class="data-table"><thead><tr><th scope="col">Стратегия</th><th scope="col">Последовательность шагов</th></tr></thead><tbody>' + stratRows + '</tbody></table>', 'Стратегии') +
+      '<ul><li>Проверка выполняется для каждой задачи и не знает заранее, верен ли ответ. Шаг исправления добавляется только после найденной исправимой ошибки.</li>' +
+      '<li>Неисправимые ошибки (нет данных, доступа или однозначного ответа) проверка не устраняет: ответ остаётся неверным.</li></ul>' +
+      '<h3>Набор задач — входные данные симуляции</h3>' +
+      tableWrap('<table class="data-table" style="min-width:900px"><thead><tr><th scope="col">ID</th><th scope="col">Задача</th><th scope="col">Сложность</th>' +
+        '<th scope="col" class="num">c</th><th scope="col" class="num">ctx</th><th scope="col">Состояние при прямом ответе</th><th scope="col">Состояние при ответе по плану</th></tr></thead><tbody>' + taskRows + '</tbody></table>', 'Набор задач') +
+      '<h3>Ограничения</h3><ul>' +
+      '<li>Это не запуск языковой модели: исход каждой задачи задан её параметрами и зависит только от стратегии. Случайность не используется, повторный запуск даёт тот же результат.</li>' +
+      '<li>Стоимость и время условные; реальные значения зависят от модели, тарифов, сети и нагрузки.</li>' +
+      '<li>Набор из 15 задач мал и подобран для обучения. Проценты — иллюстрация, а не статистическая оценка.</li>' +
+      '<li>В симуляции планирование и проверка не ухудшают верные ответы, ложных срабатываний проверки нет — в реальности возможны.</li>' +
+      '<li>Приоритет в панели меняет только формулировку вывода при сравнении, но не расчёт.</li>' +
+      '<li>Ни одна стратегия не оптимальна всегда: на простых задачах дополнительные шаги — чистая плата, на сложных они могут окупаться, а некоторые ошибки не исправляются ни планом, ни проверкой.</li></ul>';
+  }
+
+  function syncControls() {
+    document.querySelectorAll('input[name="strategy"]').forEach((el) => { el.checked = el.value === state.strategyId; });
+    document.querySelectorAll('input[data-diff]').forEach((el) => { el.checked = !!state.difficulties[el.dataset.diff]; });
+    $('priority').value = state.priority;
+  }
+
+  function render() {
+    renderSelection();
+    renderResults();
+    renderLog();
+    renderHistory();
+    renderCompare();
+    renderScenario();
+  }
+
+  /* ======================= 7. Действия ======================= */
+
+  function scrollToIfFar(el) {
+    const r = el.getBoundingClientRect();
+    if (r.top > window.innerHeight * 0.6 || r.top < 0) el.scrollIntoView({ block: 'start' });
+  }
+
+  function startRun() {
+    const tasks = selectedTasks();
+    if (tasks.length === 0) {
+      setStatus('Не выбрано ни одной задачи: симуляция не запущена. Отметьте хотя бы один уровень сложности.', 'error');
+      render();
+      return;
+    }
+    const run = registerRun(simulate(state.strategyId, tasks));
+    render();
+    setStatus('Запуск №' + run.id + ' выполнен: решено ' + run.metrics.solved + ' из ' + run.metrics.total +
+      ', шагов — ' + run.metrics.steps + ', стоимость — ' + fmtCost(run.metrics.cost) + ', задержка — ' + fmtSec(run.metrics.latency) + '.', 'ok');
+    scrollToIfFar($('results-title'));
+  }
+
+  function resetAll() {
+    state = initialState();
+    syncControls();
+    render();
+    setStatus('Всё сброшено: результаты, история, сравнение и параметры возвращены к начальному состоянию.', 'ok');
+  }
+
+  function runControlScenario() {
+    state.difficulties = { easy: true, medium: true, hard: true };
+    const tasks = selectedTasks();
+    const A = registerRun(simulate('plan', tasks));
+    const B = registerRun(simulate('verify', tasks));
+    state.strategyId = 'verify';
+    syncControls();
+    // повтор обоих запусков (без сохранения) для проверки воспроизводимости
+    const A2 = simulate('plan', tasks);
+    const B2 = simulate('verify', tasks);
+
+    const checks = [];
+    const names = (arr) => arr.map((r) => esc(r.title)).join(', ');
+    const fixedTasks = B.results.filter((r) => r.code === 'fixed');
+    const unfixTasks = B.results.filter((r) => !r.success && r.finalKind === 'unfixable');
+
+    checks.push({ ok: A.signature === B.signature && A.metrics.total === tasks.length,
+      title: 'Одинаковый набор задач в обоих запусках',
+      detail: 'Задач в каждом запуске: ' + tasks.length + '; запуск №' + A.id + ' — «Планирование и ответ», №' + B.id + ' — «Планирование, ответ и проверка».' });
+    checks.push({ ok: fixedTasks.length > 0, title: 'Проверка исправила хотя бы одну исправимую ошибку',
+      detail: fixedTasks.length ? 'Исправлено задач: ' + fixedTasks.length + ' (' + names(fixedTasks) + ').' : 'Исправлений нет.' });
+    checks.push({ ok: unfixTasks.length > 0, title: 'Хотя бы одна неисправимая ошибка осталась',
+      detail: unfixTasks.length ? 'Осталось неисправленных: ' + unfixTasks.length + ' (' + names(unfixTasks) + ').' : 'Неисправленных ошибок нет.' });
+
+    const solvedB = B.results.filter((r) => r.success).length;
+    const rateB = solvedB / B.results.length * 100;
+    checks.push({ ok: Math.abs(rateB - B.metrics.successRate) < 1e-9 && solvedB === A.metrics.solved + fixedTasks.length,
+      title: 'Успешность следует из фактических исходов',
+      detail: 'A: решено ' + A.metrics.solved + '; B: решено ' + solvedB + ' = ' + A.metrics.solved + ' + ' + fixedTasks.length +
+        ' исправл.; успешность B = ' + solvedB + ' / ' + B.results.length + ' × 100 = ' + fmtPct(rateB) + '.' });
+
+    const extra = B.steps.filter((s) => s.type === 'verify' || s.type === 'fix');
+    const sumOf = (k) => extra.reduce((t, s) => t + s[k], 0);
+    const nV = extra.filter((s) => s.type === 'verify').length;
+    const nF = extra.filter((s) => s.type === 'fix').length;
+    const tuple = (s) => [s.taskId, s.type, s.tokensIn, s.tokensOut, s.cost, s.latency].join('|');
+    const baseSame = B.steps.filter((s) => s.type !== 'verify' && s.type !== 'fix').map(tuple).join(';') === A.steps.map(tuple).join(';');
+    const dN = B.metrics.steps - A.metrics.steps;
+    const dC = B.metrics.cost - A.metrics.cost;
+    const dL = B.metrics.latency - A.metrics.latency;
+    checks.push({ ok: baseSame && dN === extra.length && dC === sumOf('cost') && dL === sumOf('latency'),
+      title: 'Приращение метрик равно вкладу шагов проверки и исправления из журнала',
+      detail: 'Шаги плана и ответа в B идентичны шагам A. Δ шагов = ' + dN + ' (проверок ' + nV + ' + исправлений ' + nF + '); Δ стоимости = ' +
+        fmtCost(dC) + ' (по журналу ' + fmtCost(sumOf('cost')) + '); Δ задержки = ' + fmtMs(dL) + ' (по журналу ' + fmtMs(sumOf('latency')) + ').' });
+
+    checks.push({ ok: consistency(A).ok && consistency(B).ok, title: 'Суммы по строкам таблицы и журналу совпадают с карточками метрик',
+      detail: 'Запуск №' + A.id + ': ' + A.metrics.steps + ' шагов; запуск №' + B.id + ': ' + B.metrics.steps + ' шагов.' });
+
+    checks.push({ ok: A.fingerprint === A2.fingerprint && B.fingerprint === B2.fingerprint &&
+      JSON.stringify(A.metrics) === JSON.stringify(A2.metrics) && JSON.stringify(B.metrics) === JSON.stringify(B2.metrics),
+      title: 'Повтор обоих запусков даёт тот же результат',
+      detail: 'Контрольные суммы журналов: план+ответ <code>' + A.fingerprint + '</code> / <code>' + A2.fingerprint + '</code>; ' +
+        'план+ответ+проверка <code>' + B.fingerprint + '</code> / <code>' + B2.fingerprint + '</code>.' });
+
+    state.scenario = { checks: checks, allOk: checks.every((c) => c.ok), runIds: [A.id, B.id] };
+    render();
+    setStatus(state.scenario.allOk ? 'Контрольный сценарий выполнен: все проверки пройдены.' : 'Контрольный сценарий выполнен: есть непройденные проверки.',
+      state.scenario.allOk ? 'ok' : 'error');
+  }
+
+  /* ======================= 8. События ======================= */
+
+  function init() {
+    renderRules();
+    syncControls();
+    render();
+
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-action]');
+      if (!btn) return;
+      const action = btn.dataset.action;
+      if (action === 'run') startRun();
+      else if (action === 'reset') resetAll();
+      else if (action === 'scenario') runControlScenario();
+      else if (action === 'select-all') {
+        state.difficulties = { easy: true, medium: true, hard: true };
+        syncControls(); setStatus(''); render();
+      } else if (action === 'view-run') {
+        state.viewedRunId = Number(btn.dataset.run);
+        state.logTask = 'all';
+        render();
+        setStatus('Открыт запуск №' + state.viewedRunId + '.', 'ok');
+        $('results-title').focus();
+        $('results-title').scrollIntoView({ block: 'start' });
+      } else if (action === 'task-log') {
+        state.logTask = btn.dataset.task;
+        renderLog();
+        $('log-title').focus();
+        $('log-title').scrollIntoView({ block: 'start' });
+      }
+    });
+
+    document.querySelectorAll('input[name="strategy"]').forEach((el) => {
+      el.addEventListener('change', () => {
+        if (el.checked) { state.strategyId = el.value; setStatus(''); render(); }
+      });
+    });
+    document.querySelectorAll('input[data-diff]').forEach((el) => {
+      el.addEventListener('change', () => {
+        state.difficulties[el.dataset.diff] = el.checked;
+        setStatus('');
+        render();
+      });
+    });
+    $('priority').addEventListener('change', (e) => { state.priority = e.target.value; renderCompare(); });
+    $('log-filter').addEventListener('change', (e) => { state.logTask = e.target.value; renderLog(); });
+    $('cmp-a').addEventListener('change', (e) => { state.compareA = Number(e.target.value); renderCompare(); });
+    $('cmp-b').addEventListener('change', (e) => { state.compareB = Number(e.target.value); renderCompare(); });
+  }
+
+  init();
+})();
